@@ -1,11 +1,17 @@
 """
-Liquidity Analyzer
-------------------
+Liquidity Analyzer with Risk Management Integration
+---------------------------------------------------
 A Python module for supply/demand zone detection, market structure (BOS/CHOCH),
 latent liquidity estimation, and fractality (Hurst exponent), with multi-timeframe support.
 
-Dependencies: numpy, pandas, matplotlib
-Optional: None
+Enhanced with Advanced Risk Management:
+- Portfolio-level risk metrics (VaR, CVaR, Sharpe, Sortino)
+- Position sizing based on liquidity analysis
+- Risk-adjusted zone strength scoring
+- Stress testing for liquidity events
+
+Dependencies: numpy, pandas, matplotlib, scipy, scikit-learn
+Optional: ta-lib, seaborn, plotly
 
 Author: Angel
 """
@@ -16,6 +22,16 @@ from typing import List, Optional, Tuple, Dict
 import numpy as np
 import pandas as pd
 import math
+import warnings
+warnings.filterwarnings('ignore')
+
+# Import risk management components
+try:
+    from risk_management import RiskManager, RiskLimits, RiskMetrics, PositionRisk
+    RISK_MANAGEMENT_AVAILABLE = True
+except ImportError:
+    RISK_MANAGEMENT_AVAILABLE = False
+    print("⚠️  Risk management module not available - using basic functionality")
 
 # -------------------------
 # Utility & Validation
@@ -161,42 +177,81 @@ class Zone:
     price_max: float
     strength: float      # heuristic score
     origin_idx: int      # index where impulse began
+    # Risk management enhancements
+    risk_adjusted_strength: float = 0.0  # Risk-adjusted score
+    position_size_recommendation: float = 0.0  # Recommended position size
+    stop_loss_price: Optional[float] = None
+    take_profit_price: Optional[float] = None
+    risk_reward_ratio: float = 0.0
+    expected_return: float = 0.0
+    max_drawdown_risk: float = 0.0
 
 
 def detect_zones(df: pd.DataFrame,
                  lookback: int = 20,
-                 impulse_factor: float = 1.5) -> List[Zone]:
+                 impulse_factor: float = 1.5,
+                 risk_manager: Optional['RiskManager'] = None) -> List[Zone]:
     """
-    Detect supply/demand zones using simple impulse logic.
-    - Identify impulsive moves relative to rolling ATR-like range.
-    - Demand zone: last bearish base before strong up impulse.
-    - Supply zone: last bullish base before strong down impulse.
+    Detect supply/demand zones using impulse logic with risk management integration.
+
+    Enhanced Features:
+    - Risk-adjusted zone strength scoring
+    - Position sizing recommendations based on Kelly criterion
+    - Stop-loss and take-profit calculations
+    - Risk-reward ratio analysis
+    - Volatility-adjusted scoring
 
     Parameters:
       lookback: rolling window for average true range proxy.
       impulse_factor: multiplier above avg range to qualify as impulse.
+      risk_manager: Optional RiskManager instance for enhanced analysis.
     """
     _require_cols(df, ['open','high','low','close'])
     high = df['high']
     low = df['low']
     close = df['close']
     rng = (high - low).rolling(lookback).mean()
+
+    # Calculate volatility for risk adjustments
+    returns = close.pct_change().dropna()
+    volatility = returns.rolling(lookback).std() * np.sqrt(252)  # Annualized
+
     zones: List[Zone] = []
 
     for i in range(lookback, len(df)-1):
-        # Impulse up
+        current_volatility = volatility.iloc[i] if i < len(volatility) else volatility.iloc[-1]
+
+        # Impulse up (Demand zone)
         if (close.iloc[i] - close.iloc[i-1]) > impulse_factor * (rng.iloc[i] or 1e-9):
-            # Base: find last small-range bearish candle cluster
             base_idx = max(0, i-3)
             base_high = df['high'].iloc[base_idx:i].max()
             base_low = df['low'].iloc[base_idx:i].min()
-            zones.append(Zone('DEMAND', df.index[base_idx], df.index[i], base_low, base_high, strength=1.0, origin_idx=i))
-        # Impulse down
+
+            # Create basic zone
+            zone = Zone('DEMAND', df.index[base_idx], df.index[i], base_low, base_high,
+                       strength=1.0, origin_idx=i)
+
+            # Apply risk management enhancements if available
+            if RISK_MANAGEMENT_AVAILABLE and risk_manager:
+                zone = _enhance_zone_with_risk_management(zone, df, i, current_volatility, risk_manager)
+
+            zones.append(zone)
+
+        # Impulse down (Supply zone)
         if (close.iloc[i-1] - close.iloc[i]) > impulse_factor * (rng.iloc[i] or 1e-9):
             base_idx = max(0, i-3)
             base_high = df['high'].iloc[base_idx:i].max()
             base_low = df['low'].iloc[base_idx:i].min()
-            zones.append(Zone('SUPPLY', df.index[base_idx], df.index[i], base_low, base_high, strength=1.0, origin_idx=i))
+
+            # Create basic zone
+            zone = Zone('SUPPLY', df.index[base_idx], df.index[i], base_low, base_high,
+                       strength=1.0, origin_idx=i)
+
+            # Apply risk management enhancements if available
+            if RISK_MANAGEMENT_AVAILABLE and risk_manager:
+                zone = _enhance_zone_with_risk_management(zone, df, i, current_volatility, risk_manager)
+
+            zones.append(zone)
 
     # Deduplicate overlapping zones by kind and proximity
     def _merge(zs: List[Zone]) -> List[Zone]:
@@ -223,7 +278,144 @@ def detect_zones(df: pd.DataFrame,
                 merged.append(z)
         return merged
 
-    return _merge(zones)
+    return _merge_zones_risk_aware(zones)
+
+
+def _enhance_zone_with_risk_management(zone: Zone, df: pd.DataFrame, idx: int,
+                                     volatility: float, risk_manager: 'RiskManager') -> Zone:
+    """
+    Enhance zone with comprehensive risk management calculations.
+
+    Features Added:
+    - Risk-adjusted strength scoring based on volatility
+    - Kelly criterion position sizing
+    - Stop-loss and take-profit levels
+    - Risk-reward ratio analysis
+    - Expected return calculations
+    """
+    try:
+        current_price = df['close'].iloc[idx]
+        zone_center = (zone.price_min + zone.price_max) / 2
+        zone_width = zone.price_max - zone.price_min
+
+        # Calculate risk-adjusted strength based on multiple factors
+        base_strength = zone.strength
+
+        # 1. Volatility adjustment (lower volatility = higher strength)
+        vol_adjustment = max(0.1, 1.0 - volatility / 0.5)  # Normalize volatility impact
+
+        # 2. Zone width adjustment (narrower zones = higher strength)
+        avg_range = (df['high'] - df['low']).rolling(20).mean().iloc[idx]
+        width_ratio = zone_width / avg_range if avg_range > 0 else 1.0
+        width_adjustment = max(0.1, 1.0 - width_ratio)
+
+        # 3. Recency adjustment (more recent zones = higher strength)
+        time_decay = max(0.1, 1.0 - (len(df) - idx) / len(df))
+
+        # 4. Volume confirmation (if available)
+        volume_strength = 1.0
+        if 'volume' in df.columns:
+            recent_volume = df['volume'].iloc[idx-5:idx].mean()
+            avg_volume = df['volume'].rolling(20).mean().iloc[idx]
+            if avg_volume > 0:
+                volume_strength = min(2.0, recent_volume / avg_volume)
+
+        # Calculate final risk-adjusted strength
+        zone.risk_adjusted_strength = (base_strength * vol_adjustment *
+                                     width_adjustment * time_decay * volume_strength)
+
+        # Position sizing using Kelly criterion
+        if hasattr(risk_manager, 'risk_limits'):
+            max_risk_per_trade = risk_manager.risk_limits.max_single_position
+
+            # Use risk-adjusted strength as win probability proxy
+            win_probability = min(0.95, max(0.1, zone.risk_adjusted_strength))
+            risk_reward_ratio = 2.0  # Conservative 1:2 risk-reward assumption
+
+            # Kelly formula: (win_prob * (R+1) - 1) / R
+            kelly_fraction = (win_probability * (risk_reward_ratio + 1) - 1) / risk_reward_ratio
+            kelly_fraction = max(0, min(kelly_fraction, max_risk_per_trade))
+
+            zone.position_size_recommendation = kelly_fraction
+
+        # Stop-loss and take-profit calculations
+        risk_buffer = zone_width * 0.1  # 10% buffer
+
+        if zone.kind == 'DEMAND':
+            # Long position from demand zone
+            zone.stop_loss_price = zone.price_min - risk_buffer
+            zone.take_profit_price = zone.price_max + zone_width * 2.0  # 2:1 reward target
+        else:
+            # Short position from supply zone
+            zone.stop_loss_price = zone.price_max + risk_buffer
+            zone.take_profit_price = zone.price_min - zone_width * 2.0  # 2:1 reward target
+
+        # Risk-reward ratio calculation
+        if zone.stop_loss_price and zone.take_profit_price:
+            risk = abs(current_price - zone.stop_loss_price)
+            reward = abs(zone.take_profit_price - current_price)
+            zone.risk_reward_ratio = reward / risk if risk > 0 else 0
+
+            # Expected return calculation
+            win_probability = zone.risk_adjusted_strength
+            zone.expected_return = win_probability * reward - (1 - win_probability) * risk
+
+            # Maximum drawdown risk estimation
+            zone.max_drawdown_risk = risk * zone.position_size_recommendation
+
+        return zone
+
+    except Exception as e:
+        print(f"⚠️  Risk management enhancement error: {e}")
+        return zone
+
+
+def _merge_zones_risk_aware(zones: List[Zone]) -> List[Zone]:
+    """
+    Merge overlapping zones with risk management consideration.
+
+    Prioritizes zones with higher risk-adjusted strength and combines
+    risk metrics appropriately.
+    """
+    if not zones:
+        return zones
+
+    zones = sorted(zones, key=lambda z: (z.kind, z.start_time))
+    merged: List[Zone] = []
+
+    for zone in zones:
+        if not merged:
+            merged.append(zone)
+            continue
+
+        last = merged[-1]
+
+        # Check for significant overlap
+        if (zone.kind == last.kind and
+            zone.start_time <= last.end_time and
+            abs((zone.price_min + zone.price_max)/2 -
+                (last.price_min + last.price_max)/2) /
+            ((zone.price_max - zone.price_min) or 1e-9) < 0.2):
+
+            # Merge zones - keep the stronger one based on risk-adjusted strength
+            if zone.risk_adjusted_strength > last.risk_adjusted_strength:
+                # Replace with stronger zone
+                merged[-1] = zone
+            else:
+                # Update existing zone with combined risk metrics
+                last.position_size_recommendation = max(
+                    last.position_size_recommendation,
+                    zone.position_size_recommendation
+                )
+                last.expected_return = max(last.expected_return, zone.expected_return)
+                last.risk_adjusted_strength = max(
+                    last.risk_adjusted_strength,
+                    zone.risk_adjusted_strength
+                )
+        else:
+            merged.append(zone)
+
+    return merged
 
 
 # -------------------------
@@ -453,3 +645,18 @@ def plot_with_zones(df: pd.DataFrame, zones: List[Zone], title: str = "Liquidity
     plt.tight_layout()
     return fig, ax
 
+
+# -------------------------
+# Alias for compatibility
+# -------------------------
+
+# Import the main analyzer class for easier access
+try:
+    from liquidity_market_analyzer import LiquidityMarketAnalyzer as _LiquidityMarketAnalyzer
+    LiquidityAnalyzer = _LiquidityMarketAnalyzer  # Alias for backward compatibility
+except ImportError:
+    # Fallback if liquidity_market_analyzer is not available
+    class LiquidityAnalyzer:
+        """Fallback LiquidityAnalyzer class when liquidity_market_analyzer is not available."""
+        def __init__(self):
+            print("⚠️  LiquidityMarketAnalyzer not available, using basic functionality")

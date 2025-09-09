@@ -1,0 +1,52 @@
+MONTE CARLO TRADING APPLICATION - CLEAN VERSION
+============================================================
+
+This is a cleaned version of the Monte Carlo trading application
+containing only the essential files needed for the application to function.
+
+ESSENTIAL FILES INCLUDED:
+------------------------------
+✓ monte_carlo_gui_app.py
+✓ data_fetcher.py
+✓ monte_carlo_trade_simulation.py
+✓ risk_management.py
+✓ liquidity_analyzer.py
+✓ modern_gui_app.py
+✓ requirements.txt
+✓ README.md
+✓ USAGE_GUIDE.md
+✓ GUI_APPLICATION_GUIDE.md
+✓ MNQ_F_1h_30days.csv
+✓ algorithms/ (entire directory)
+
+FILES EXCLUDED (to reduce clutter):
+----------------------------------------
+• Demo scripts (demo_*.py)
+• Test files (test_*.py)
+• Debug scripts (debug_*.py)
+• Utility scripts (fix_*, calibrate_*, etc.)
+• Excessive documentation (*.md files)
+• Generated images (*.png)
+• Cache directories (__pycache__)
+• Backup/alternative versions
+
+USAGE:
+----------
+1. Install dependencies: pip install -r requirements.txt
+2. Run main application: python monte_carlo_gui_app.py
+3. Run alternative GUI: python modern_gui_app.py
+
+FEATURES INCLUDED:
+--------------------
+• Monte Carlo simulation with multiple methods
+• Multi-strategy consensus backtesting
+• Advanced ML algorithms (LSTM, Transformer, etc.)
+• Risk management and position sizing
+• Liquidity analysis and market structure
+• Interactive GUI with real-time updates
+• Portfolio optimization tools
+• Comprehensive charting and visualization
+
+
+Created by: Monte Carlo Project Auto Cleaner
+Original project maintained in parent directory

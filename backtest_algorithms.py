@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from typing import Dict, List, Any, Optional
 import sys
 import os
+import time
 
 # Add algorithms directory to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'algorithms'))
@@ -17,6 +18,63 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'algorithms'))
 from algorithms.algorithm_manager import algorithm_manager
 from data_fetcher import fetch_stock_data, calculate_returns_from_ohlcv
 from monte_carlo_trade_simulation import random_trade_order_simulation
+
+def benchmark_backtest_performance(algorithm_configs: List[Dict[str, Any]], data: pd.DataFrame,
+                                 num_runs: int = 3) -> Dict[str, float]:
+    """
+    Benchmark backtest performance with and without optimizations.
+
+    Args:
+        algorithm_configs: List of algorithm configurations
+        data: OHLCV data
+        num_runs: Number of benchmark runs
+
+    Returns:
+        dict: Performance metrics
+    """
+    print(f"\n⚡ PERFORMANCE BENCHMARKING")
+    print("=" * 40)
+
+    # Test parallel vs sequential
+    times_parallel = []
+    times_sequential = []
+
+    for run in range(num_runs):
+        print(f"\n🏃 Run {run + 1}/{num_runs}")
+
+        # Test sequential (disable parallel)
+        algorithm_manager.use_parallel = False
+        start_time = time.time()
+        results_seq = algorithm_manager.backtest_multiple_algorithms(algorithm_configs, data)
+        seq_time = time.time() - start_time
+        times_sequential.append(seq_time)
+
+        # Test parallel
+        algorithm_manager.use_parallel = True
+        start_time = time.time()
+        results_par = algorithm_manager.backtest_multiple_algorithms(algorithm_configs, data)
+        par_time = time.time() - start_time
+        times_parallel.append(par_time)
+
+        speedup = seq_time / par_time if par_time > 0 else 1.0
+        print(".2f")
+
+    # Calculate averages
+    avg_seq = np.mean(times_sequential)
+    avg_par = np.mean(times_parallel)
+    avg_speedup = avg_seq / avg_par if avg_par > 0 else 1.0
+
+    print("
+📊 AVERAGE PERFORMANCE:"    print(".2f"    print(".2f"    print(".2f"
+    # Re-enable parallel processing
+    algorithm_manager.use_parallel = True
+
+    return {
+        'sequential_time': avg_seq,
+        'parallel_time': avg_par,
+        'speedup': avg_speedup,
+        'cache_hits': len(algorithm_manager.cache_dir.glob("*.pkl")) if hasattr(algorithm_manager, 'cache_dir') else 0
+    }
 
 def get_user_algorithm_selection() -> List[Dict[str, Any]]:
     """Get user's algorithm selection and parameters."""

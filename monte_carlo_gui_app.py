@@ -1,3 +1,5 @@
+
+
 """
 Monte Carlo Trading Strategy GUI Application
 
@@ -121,25 +123,32 @@ class MonteCarloGUI:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
         
-        # Tab 1: Data & Strategy Selection
+        # Tab 1: Data Selection
         self.create_data_tab()
-        
-        # Tab 2: Monte Carlo Analysis
+
+        # Tab 2: Strategy Configuration
+        self.create_strategy_tab()
+
+        # Tab 3: Monte Carlo Analysis
         self.create_monte_carlo_tab()
-        
-        # Tab 3: Market Scenarios
+
+        # Tab 4: Market Scenarios
         self.create_scenarios_tab()
-        
-        # Tab 4: Portfolio Optimization
+
+        # Tab 5: Portfolio Optimization
         self.create_portfolio_tab()
-        
-        # Tab 5: Results & Visualization
+
+        # Tab 6: Results & Visualization
         self.create_results_tab()
-        
-        # Tab 6: Liquidity Analysis (if available)
+
+        # Tab 7: Liquidity Analysis (if available)
         if LIQUIDITY_AVAILABLE:
             self.create_liquidity_tab()
         
+        # Initialize parameter calculations after all tabs are created
+        self.update_position_size()
+        self.update_risk_reward_ratio()
+
         # Status bar with reposition button
         status_frame = ttk.Frame(self.root)
         status_frame.pack(side='bottom', fill='x')
@@ -156,140 +165,958 @@ class MonteCarloGUI:
     def create_data_tab(self):
         """Create data and strategy selection tab."""
         self.data_frame = ttk.Frame(self.notebook)
-        self.notebook.add(self.data_frame, text="📊 Data & Strategy")
+        self.notebook.add(self.data_frame, text="📊 Data Selection")
         
         # Data Selection Section
-        data_section = ttk.LabelFrame(self.data_frame, text="Data Selection", padding=10)
+        data_section = ttk.LabelFrame(self.data_frame, text="Market Data Configuration", padding=10)
         data_section.pack(fill='x', padx=10, pady=5)
-        
+
         # Asset type selection
-        ttk.Label(data_section, text="Asset Type:").grid(row=0, column=0, sticky='w', padx=5)
+        ttk.Label(data_section, text="Asset Type:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
         self.asset_type_var = tk.StringVar(value="stocks")
         asset_type_combo = ttk.Combobox(data_section, textvariable=self.asset_type_var,
-                                       values=["stocks", "futures", "crypto", "forex"], width=8)
-        asset_type_combo.grid(row=0, column=1, padx=5)
+                                       values=["stocks", "futures", "crypto", "forex"], width=10)
+        asset_type_combo.grid(row=0, column=1, padx=5, pady=5)
         asset_type_combo.bind('<<ComboboxSelected>>', self.on_asset_type_change)
-        
+
         # Ticker input
-        ttk.Label(data_section, text="Ticker Symbol:").grid(row=0, column=2, sticky='w', padx=5)
+        ttk.Label(data_section, text="Ticker Symbol:").grid(row=0, column=2, sticky='w', padx=5, pady=5)
         self.ticker_var = tk.StringVar(value="SPY")
         self.ticker_combo = ttk.Combobox(data_section, textvariable=self.ticker_var, width=12)
-        self.ticker_combo.grid(row=0, column=3, padx=5)
-        
+        self.ticker_combo.grid(row=0, column=3, padx=5, pady=5)
+
         # Initialize ticker options
         self.update_ticker_options()
-        
+
         # Period selection
-        ttk.Label(data_section, text="Period:").grid(row=0, column=4, sticky='w', padx=5)
+        ttk.Label(data_section, text="Time Period:").grid(row=1, column=0, sticky='w', padx=5, pady=5)
         self.period_var = tk.StringVar(value="1y")
-        period_combo = ttk.Combobox(data_section, textvariable=self.period_var, 
-                                   values=["1mo", "3mo", "6mo", "1y", "2y"], width=8)
-        period_combo.grid(row=0, column=5, padx=5)
-        
+        period_combo = ttk.Combobox(data_section, textvariable=self.period_var,
+                                   values=["1mo", "3mo", "6mo", "1y", "2y", "5y"], width=8)
+        period_combo.grid(row=1, column=1, padx=5, pady=5)
+
         # Interval selection
-        ttk.Label(data_section, text="Interval:").grid(row=0, column=6, sticky='w', padx=5)
+        ttk.Label(data_section, text="Data Interval:").grid(row=1, column=2, sticky='w', padx=5, pady=5)
         self.interval_var = tk.StringVar(value="1d")
         interval_combo = ttk.Combobox(data_section, textvariable=self.interval_var,
-                                     values=["1d", "1h", "30m", "15m"], width=8)
-        interval_combo.grid(row=0, column=7, padx=5)
-        
-        # Load data button
-        load_btn = ttk.Button(data_section, text="Load Data", command=self.load_data)
-        load_btn.grid(row=0, column=8, padx=10)
-        
-        # Data info
-        self.data_info_var = tk.StringVar(value="No data loaded")
-        ttk.Label(data_section, textvariable=self.data_info_var).grid(row=1, column=0, columnspan=7, pady=5)
-        
-        # Strategy Selection Section
-        strategy_section = ttk.LabelFrame(self.data_frame, text="Trading Strategy", padding=10)
-        strategy_section.pack(fill='x', padx=10, pady=5)
+                                     values=["1d", "1h", "30m", "15m", "5m"], width=8)
+        interval_combo.grid(row=1, column=3, padx=5, pady=5)
 
-        # Strategy Parameter Presets
-        ttk.Label(strategy_section, text="Strategy Preset:").grid(row=0, column=0, sticky='w', padx=5)
+        # Load data button
+        load_btn = ttk.Button(data_section, text="📥 Load Market Data",
+                             command=self.load_data, width=15)
+        load_btn.grid(row=2, column=0, columnspan=2, padx=5, pady=10)
+        
+        # Data info and preview
+        info_section = ttk.LabelFrame(self.data_frame, text="Data Information", padding=10)
+        info_section.pack(fill='x', padx=10, pady=5)
+
+        # Data status
+        self.data_info_var = tk.StringVar(value="No data loaded")
+        ttk.Label(info_section, textvariable=self.data_info_var,
+                 font=('TkDefaultFont', 9)).pack(anchor='w', pady=2)
+
+        # Data preview area
+        self.data_preview_text = tk.Text(info_section, height=6, width=80,
+                                        font=('Courier', 8), state='disabled')
+        self.data_preview_text.pack(fill='x', pady=5)
+
+        # Note: Parameter calculations will be initialized after strategy tab is created
+
+        # Quick data operations
+        quick_ops_section = ttk.LabelFrame(self.data_frame, text="Quick Operations", padding=10)
+        quick_ops_section.pack(fill='x', padx=10, pady=5)
+
+        # Quick load buttons
+        ttk.Button(quick_ops_section, text="📊 SPY (S&P 500)",
+                  command=lambda: self.quick_load_symbol("SPY")).grid(row=0, column=0, padx=5, pady=2)
+        ttk.Button(quick_ops_section, text="💰 AAPL (Apple)",
+                  command=lambda: self.quick_load_symbol("AAPL")).grid(row=0, column=1, padx=5, pady=2)
+        ttk.Button(quick_ops_section, text="⚡ TSLA (Tesla)",
+                  command=lambda: self.quick_load_symbol("TSLA")).grid(row=0, column=2, padx=5, pady=2)
+        ttk.Button(quick_ops_section, text="🔄 BTC-USD (Bitcoin)",
+                  command=lambda: self.quick_load_crypto("BTC-USD")).grid(row=1, column=0, padx=5, pady=2)
+        ttk.Button(quick_ops_section, text="📈 ETH-USD (Ethereum)",
+                  command=lambda: self.quick_load_crypto("ETH-USD")).grid(row=1, column=1, padx=5, pady=2)
+
+    def create_strategy_tab(self):
+        """Create strategy configuration tab with multi-selection and detailed descriptions."""
+        self.strategy_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.strategy_frame, text="🎯 Strategy Configuration")
+
+        # Create main container with two columns
+        main_container = ttk.Frame(self.strategy_frame)
+        main_container.pack(fill='both', expand=True, padx=10, pady=5)
+
+        # Left column - Algorithm selection and configuration
+        left_frame = ttk.Frame(main_container)
+        left_frame.pack(side='left', fill='both', expand=True, padx=(0, 5))
+
+        # Strategy Selection Section
+        strategy_section = ttk.LabelFrame(left_frame, text="Algorithm Selection", padding=10)
+        strategy_section.pack(fill='x', pady=(0, 5))
+
+        # Strategy presets
+        ttk.Label(strategy_section, text="Strategy Preset:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
         self.strategy_preset_var = tk.StringVar(value="Balanced")
         preset_combo = ttk.Combobox(strategy_section, textvariable=self.strategy_preset_var,
                                   values=["Conservative", "Balanced", "Aggressive", "Custom"], width=12)
-        preset_combo.grid(row=0, column=1, padx=5)
+        preset_combo.grid(row=0, column=1, padx=5, pady=5)
         preset_combo.bind('<<ComboboxSelected>>', self.on_strategy_preset_change)
 
-        # Algorithm selection
-        ttk.Label(strategy_section, text="Algorithm:").grid(row=0, column=2, sticky='w', padx=5)
-        algorithms = list(self.algorithm_manager.algorithms.keys())
-        self.algorithm_var = tk.StringVar(value=algorithms[0] if algorithms else "")
-        self.algorithm_combo = ttk.Combobox(strategy_section, textvariable=self.algorithm_var,
-                                           values=algorithms, width=20)
-        self.algorithm_combo.grid(row=0, column=3, padx=5)
-        self.algorithm_combo.bind('<<ComboboxSelected>>', self.on_algorithm_change)
-        
-        # Upload algorithm button
-        upload_btn = ttk.Button(strategy_section, text="Upload Algorithm", command=self.upload_algorithm)
-        upload_btn.grid(row=1, column=0, padx=5, pady=2, sticky='w')
+        # Multi-algorithm selection
+        ttk.Label(strategy_section, text="Select Algorithms:").grid(row=1, column=0, sticky='w', padx=5, pady=5)
 
-        # Help button for algorithm creation
-        help_btn = ttk.Button(strategy_section, text="Help", command=self.show_algorithm_help)
-        help_btn.grid(row=1, column=1, padx=5, pady=2, sticky='w')
+        # Create frame for algorithm selection
+        algo_frame = ttk.Frame(strategy_section)
+        algo_frame.grid(row=1, column=1, columnspan=3, sticky='ew', padx=5, pady=5)
 
-        # Advanced Strategy Parameters
-        params_section = ttk.LabelFrame(self.data_frame, text="Advanced Strategy Parameters", padding=10)
-        params_section.pack(fill='x', padx=10, pady=5)
+        # Algorithm listbox with checkboxes
+        self.create_algorithm_selection(algo_frame)
 
-        # Risk Management Parameters
-        ttk.Label(params_section, text="Risk Management:").grid(row=0, column=0, sticky='w', padx=5)
+        # Quick selection buttons
+        quick_select_frame = ttk.Frame(strategy_section)
+        quick_select_frame.grid(row=2, column=0, columnspan=4, pady=5)
+
+        ttk.Button(quick_select_frame, text="🎯 Select All ML",
+                  command=lambda: self.select_algorithms_by_type('machine_learning')).pack(side='left', padx=2)
+        ttk.Button(quick_select_frame, text="📊 Select All Traditional",
+                  command=lambda: self.select_algorithms_by_type('traditional')).pack(side='left', padx=2)
+        ttk.Button(quick_select_frame, text="❌ Clear All",
+                  command=self.clear_algorithm_selection).pack(side='left', padx=2)
+
+        # Algorithm management buttons
+        button_frame = ttk.Frame(strategy_section)
+        button_frame.grid(row=3, column=0, columnspan=4, pady=5)
+
+        ttk.Button(button_frame, text="📤 Upload Algorithm",
+                  command=self.upload_algorithm).pack(side='left', padx=2)
+        ttk.Button(button_frame, text="❓ Help",
+                  command=self.show_algorithm_help).pack(side='left', padx=2)
+        ttk.Button(button_frame, text="🔄 Refresh List",
+                  command=self.refresh_algorithms).pack(side='left', padx=2)
+
+        # Right column - Algorithm details and backtesting
+        right_frame = ttk.Frame(main_container)
+        right_frame.pack(side='right', fill='both', expand=True, padx=(5, 0))
+
+        # Algorithm Description Panel
+        desc_section = ttk.LabelFrame(right_frame, text="Algorithm Details", padding=10)
+        desc_section.pack(fill='both', expand=True, pady=(0, 5))
+
+        # Algorithm description display
+        self.algo_desc_text = tk.Text(desc_section, height=12, width=50,
+                                     font=('TkDefaultFont', 9), state='disabled',
+                                     wrap=tk.WORD, relief='flat', bg='#f8f8f8')
+        self.algo_desc_text.pack(fill='both', expand=True, pady=2)
+
+        # Risk Management Parameters (moved to left column)
+        risk_section = ttk.LabelFrame(left_frame, text="Risk Management Parameters", padding=10)
+        risk_section.pack(fill='x', pady=(5, 5))
+
+        # Risk per trade
+        ttk.Label(risk_section, text="Risk per Trade:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
         self.risk_mgmt_var = tk.DoubleVar(value=0.02)  # 2% risk per trade
-        risk_frame = ttk.Frame(params_section)
-        risk_frame.grid(row=0, column=1, padx=5)
+        risk_frame = ttk.Frame(risk_section)
+        risk_frame.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
         risk_scale = ttk.Scale(risk_frame, from_=0.005, to=0.10, orient='horizontal',
                               variable=self.risk_mgmt_var, command=self.on_risk_change)
         risk_scale.pack(side='left', fill='x', expand=True)
-        self.risk_label = ttk.Label(risk_frame, text="2.0%")
-        self.risk_label.pack(side='right')
+        self.risk_label = ttk.Label(risk_frame, text="2.0%", font=('TkDefaultFont', 9, 'bold'))
+        self.risk_label.pack(side='right', padx=5)
 
-        # Stop Loss Parameters
-        ttk.Label(params_section, text="Stop Loss:").grid(row=0, column=2, sticky='w', padx=5)
+        # Stop Loss
+        ttk.Label(risk_section, text="Stop Loss:").grid(row=0, column=2, sticky='w', padx=5, pady=5)
         self.stop_loss_var = tk.DoubleVar(value=0.05)  # 5% stop loss
-        stop_frame = ttk.Frame(params_section)
-        stop_frame.grid(row=0, column=3, padx=5)
-        stop_scale = ttk.Scale(stop_frame, from_=0.01, to=0.15, orient='horizontal',
+        stop_frame = ttk.Frame(risk_section)
+        stop_frame.grid(row=0, column=3, padx=5, pady=5, sticky='ew')
+        stop_scale = ttk.Scale(stop_frame, from_=0.01, to=0.20, orient='horizontal',
                               variable=self.stop_loss_var, command=self.on_stop_change)
         stop_scale.pack(side='left', fill='x', expand=True)
-        self.stop_label = ttk.Label(stop_frame, text="5.0%")
-        self.stop_label.pack(side='right')
+        self.stop_label = ttk.Label(stop_frame, text="5.0%", font=('TkDefaultFont', 9, 'bold'))
+        self.stop_label.pack(side='right', padx=5)
 
-        # Take Profit Parameters
-        ttk.Label(params_section, text="Take Profit:").grid(row=0, column=4, sticky='w', padx=5)
+        # Take Profit
+        ttk.Label(risk_section, text="Take Profit:").grid(row=1, column=0, sticky='w', padx=5, pady=5)
         self.take_profit_var = tk.DoubleVar(value=0.10)  # 10% take profit
-        profit_frame = ttk.Frame(params_section)
-        profit_frame.grid(row=0, column=5, padx=5)
-        profit_scale = ttk.Scale(profit_frame, from_=0.02, to=0.30, orient='horizontal',
+        profit_frame = ttk.Frame(risk_section)
+        profit_frame.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
+        profit_scale = ttk.Scale(profit_frame, from_=0.02, to=0.50, orient='horizontal',
                                 variable=self.take_profit_var, command=self.on_profit_change)
         profit_scale.pack(side='left', fill='x', expand=True)
-        self.profit_label = ttk.Label(profit_frame, text="10.0%")
-        self.profit_label.pack(side='right')
+        self.profit_label = ttk.Label(profit_frame, text="10.0%", font=('TkDefaultFont', 9, 'bold'))
+        self.profit_label.pack(side='right', padx=5)
+
+        # Risk-Reward ratio display
+        ttk.Label(risk_section, text="Risk-Reward Ratio:").grid(row=1, column=2, sticky='w', padx=5, pady=5)
+        self.risk_reward_var = tk.StringVar(value="2.0:1")
+        ttk.Label(risk_section, textvariable=self.risk_reward_var,
+                 font=('TkDefaultFont', 9, 'bold'), foreground='blue').grid(row=1, column=3, sticky='w', padx=5, pady=5)
+
+        # Capital and Position Sizing
+        capital_section = ttk.LabelFrame(left_frame, text="Capital & Position Sizing", padding=10)
+        capital_section.pack(fill='x', pady=(5, 5))
 
         # Initial capital
-        ttk.Label(params_section, text="Initial Capital:").grid(row=1, column=0, sticky='w', padx=5, pady=5)
+        ttk.Label(capital_section, text="Initial Capital ($):").grid(row=0, column=0, sticky='w', padx=5, pady=5)
         self.capital_var = tk.StringVar(value="10000")
-        capital_entry = ttk.Entry(params_section, textvariable=self.capital_var, width=10)
-        capital_entry.grid(row=1, column=1, padx=5)
+        capital_entry = ttk.Entry(capital_section, textvariable=self.capital_var, width=15,
+                                 font=('TkDefaultFont', 9))
+        capital_entry.grid(row=0, column=1, padx=5, pady=5)
 
-        # Strategy Status Indicator
+        # Position size calculator
+        ttk.Label(capital_section, text="Max Position Size:").grid(row=0, column=2, sticky='w', padx=5, pady=5)
+        self.position_size_var = tk.StringVar(value="$200 (2.0%)")
+        ttk.Label(capital_section, textvariable=self.position_size_var,
+                 font=('TkDefaultFont', 9, 'bold'), foreground='green').grid(row=0, column=3, sticky='w', padx=5, pady=5)
+
+        # Strategy Status and Validation
+        status_section = ttk.LabelFrame(left_frame, text="Strategy Validation", padding=10)
+        status_section.pack(fill='x', pady=(5, 5))
+
+        # Status display
         self.strategy_status_var = tk.StringVar(value="✅ Strategy: Balanced configuration")
-        ttk.Label(params_section, textvariable=self.strategy_status_var,
-                 foreground="green", font=('TkDefaultFont', 8)).grid(row=1, column=2, columnspan=4, sticky='w')
+        ttk.Label(status_section, textvariable=self.strategy_status_var,
+                 font=('TkDefaultFont', 9, 'bold')).pack(anchor='w', pady=2)
 
-        # Run backtest button
-        backtest_btn = ttk.Button(params_section, text="Run Backtest", command=self.run_backtest)
-        backtest_btn.grid(row=1, column=5, padx=10)
-        
-        # Results display
-        self.results_text = tk.Text(self.data_frame, height=15, width=80)
-        self.results_text.pack(fill='both', expand=True, padx=10, pady=5)
-        
-        # Scrollbar for results
-        scrollbar = ttk.Scrollbar(self.data_frame, orient='vertical', command=self.results_text.yview)
-        self.results_text.configure(yscrollcommand=scrollbar.set)
-    
+        # Validation messages
+        self.validation_text = tk.Text(status_section, height=3, width=80,
+                                      font=('TkDefaultFont', 8), state='disabled',
+                                      bg='#f8f8f8', relief='flat')
+        self.validation_text.pack(fill='x', pady=5)
+
+        # Consensus Multi-Strategy Backtest Section
+        backtest_section = ttk.LabelFrame(right_frame, text="🎯 Consensus Multi-Strategy Backtest", padding=10)
+        backtest_section.pack(fill='x', pady=(5, 5))
+
+        # Backtest controls with consensus explanation
+        ttk.Label(backtest_section, text="🎯 CONSENSUS STRATEGY:",
+                 font=('TkDefaultFont', 9, 'bold')).pack(anchor='w', pady=2)
+
+        ttk.Label(backtest_section, text="ALL selected algorithms must agree on signals",
+                 font=('TkDefaultFont', 8), foreground='blue').pack(anchor='w', pady=2)
+
+        # Selected algorithms display
+        self.selected_algos_var = tk.StringVar(value="No algorithms selected")
+        ttk.Label(backtest_section, textvariable=self.selected_algos_var,
+                 font=('TkDefaultFont', 8), foreground='blue').pack(anchor='w', pady=2)
+
+        # Backtest button and status
+        backtest_frame = ttk.Frame(backtest_section)
+        backtest_frame.pack(fill='x', pady=5)
+
+        self.run_multi_backtest_btn = ttk.Button(backtest_frame, text="🚀 Run Consensus Backtest",
+                                               command=self.run_multi_strategy_backtest)
+        self.run_multi_backtest_btn.pack(side='left', padx=5)
+
+        self.multi_backtest_status_var = tk.StringVar(value="Ready for consensus backtest")
+        ttk.Label(backtest_frame, textvariable=self.multi_backtest_status_var,
+                 font=('TkDefaultFont', 8)).pack(side='left', padx=10)
+
+        # Multi-backtest results display
+        self.multi_backtest_results_text = tk.Text(backtest_section, height=10, width=50,
+                                                 font=('Courier', 8), state='disabled')
+        self.multi_backtest_results_text.pack(fill='both', expand=True, pady=5)
+
+        # Apply parameter validation on initialization
+        self.validate_strategy_params()
+
+    def create_algorithm_selection(self, parent_frame):
+        """Create multi-selection algorithm list with checkboxes."""
+        # Create scrollable frame for algorithm list
+        self.algo_canvas = tk.Canvas(parent_frame, height=120, bg='#f8f8f8')
+        scrollbar = ttk.Scrollbar(parent_frame, orient="vertical", command=self.algo_canvas.yview)
+        self.algo_scrollable_frame = ttk.Frame(self.algo_canvas)
+
+        self.algo_scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.algo_canvas.configure(scrollregion=self.algo_canvas.bbox("all"))
+        )
+
+        self.algo_canvas.create_window((0, 0), window=self.algo_scrollable_frame, anchor="nw")
+        self.algo_canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Pack canvas and scrollbar
+        self.algo_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Get available algorithms
+        algorithms = list(self.algorithm_manager.algorithms.keys())
+        self.selected_algorithms = set()  # Track selected algorithms
+        self.algo_checkbuttons = {}  # Store checkbutton references
+
+        # Create checkbuttons for each algorithm
+        for i, algo_name in enumerate(algorithms):
+            # Get algorithm info
+            algo_info = self.algorithm_manager.get_algorithm_info(algo_name)
+            algo_type = algo_info['type'] if algo_info else 'unknown'
+
+            # Choose emoji based on type
+            if algo_type == 'machine_learning':
+                emoji = "🤖"
+            elif algo_type == 'technical_indicators':
+                emoji = "📊"
+            elif algo_type == 'mean_reversion':
+                emoji = "🔄"
+            elif algo_type == 'momentum':
+                emoji = "📈"
+            elif algo_type == 'trend_following':
+                emoji = "📉"
+            else:
+                emoji = "🎯"
+
+            # Create frame for this algorithm
+            algo_frame = ttk.Frame(self.algo_scrollable_frame)
+            algo_frame.pack(fill='x', padx=2, pady=1)
+
+            # Create checkbutton variable
+            var = tk.BooleanVar(value=False)
+            self.algo_checkbuttons[algo_name] = var
+
+            # Create checkbutton with algorithm name and emoji
+            cb = ttk.Checkbutton(
+                algo_frame,
+                text=f"{emoji} {algo_name}",
+                variable=var,
+                command=lambda name=algo_name: self.on_algorithm_selection_change(name)
+            )
+            cb.pack(side='left', anchor='w')
+
+            # Bind click to show description
+            cb.bind('<Button-1>', lambda e, name=algo_name: self.show_algorithm_description(name))
+
+    def on_algorithm_selection_change(self, algorithm_name):
+        """Handle algorithm selection changes."""
+        if self.algo_checkbuttons[algorithm_name].get():
+            self.selected_algorithms.add(algorithm_name)
+        else:
+            self.selected_algorithms.discard(algorithm_name)
+
+        # Update selected algorithms display
+        self.update_selected_algorithms_display()
+
+        # Show description for the selected algorithm
+        self.show_algorithm_description(algorithm_name)
+
+    def update_selected_algorithms_display(self):
+        """Update the display of selected algorithms."""
+        if not self.selected_algorithms:
+            self.selected_algos_var.set("No algorithms selected")
+        else:
+            selected_list = list(self.selected_algorithms)
+            if len(selected_list) <= 3:
+                display_text = ", ".join(selected_list)
+            else:
+                display_text = f"{', '.join(selected_list[:3])} +{len(selected_list)-3} more"
+            self.selected_algos_var.set(f"Selected: {display_text} ({len(selected_list)} total)")
+
+    def show_algorithm_description(self, algorithm_name):
+        """Show detailed description of the selected algorithm."""
+        try:
+            # Clear previous description
+            self.algo_desc_text.config(state='normal')
+            self.algo_desc_text.delete(1.0, tk.END)
+
+            # Get algorithm info
+            algo_info = self.algorithm_manager.get_algorithm_info(algorithm_name)
+
+            if not algo_info:
+                self.algo_desc_text.insert(1.0, f"No information available for {algorithm_name}")
+                self.algo_desc_text.config(state='disabled')
+                return
+
+            # Create detailed description
+            desc_lines = [
+                f"🎯 ALGORITHM: {algo_info['name']}",
+                "=" * 50,
+                "",
+                f"📂 Category: {algo_info['type'].replace('_', ' ').title()}",
+                "",
+                f"📝 Description:",
+                f"{algo_info['description']}",
+                "",
+                "⚙️ PARAMETERS:"
+            ]
+
+            # Add parameter information
+            if 'parameters' in algo_info and algo_info['parameters']:
+                for param_name, param_info in algo_info['parameters'].items():
+                    param_type = param_info.get('type', 'unknown')
+                    param_default = param_info.get('default', 'N/A')
+                    param_desc = param_info.get('description', 'No description')
+
+                    desc_lines.extend([
+                        f"  • {param_name} ({param_type})",
+                        f"    Default: {param_default}",
+                        f"    {param_desc}",
+                        ""
+                    ])
+            else:
+                desc_lines.append("  No parameters available")
+
+            desc_lines.extend([
+                "",
+                "💡 USAGE TIPS:",
+                f"  • Best suited for: {self._get_algorithm_use_case(algorithm_name)}",
+                f"  • Expected performance: {self._get_algorithm_performance(algorithm_name)}",
+                f"  • Risk level: {self._get_algorithm_risk_level(algorithm_name)}",
+                "",
+                "🔧 CONFIGURATION:",
+                "  • Adjust parameters based on your risk tolerance",
+                "  • Test on historical data before live trading",
+                "  • Monitor performance metrics regularly"
+            ])
+
+            # Insert description
+            description = "\n".join(desc_lines)
+            self.algo_desc_text.insert(1.0, description)
+            self.algo_desc_text.config(state='disabled')
+
+        except Exception as e:
+            error_desc = f"Error loading description for {algorithm_name}:\n{str(e)}"
+            self.algo_desc_text.config(state='normal')
+            self.algo_desc_text.delete(1.0, tk.END)
+            self.algo_desc_text.insert(1.0, error_desc)
+            self.algo_desc_text.config(state='disabled')
+
+    def _get_algorithm_use_case(self, algorithm_name):
+        """Get use case description for an algorithm."""
+        use_cases = {
+            'LSTMTradingStrategy': 'Trend following and pattern recognition',
+            'TransformerTradingStrategy': 'Complex market relationships and multi-factor analysis',
+            'EnsembleStackingStrategy': 'Robust predictions with reduced overfitting',
+            'ReinforcementLearningStrategy': 'Adaptive strategies that learn from experience',
+            'AutoencoderAnomalyStrategy': 'Identifying unusual market conditions',
+            'RSIOversoldOverbought': 'Mean reversion in overbought/oversold conditions',
+            'PriceMomentum': 'Capturing momentum in trending markets',
+            'MovingAverageCrossover': 'Simple trend-following signals',
+            'AdvancedMLStrategy': 'General-purpose ML trading signals'
+        }
+        return use_cases.get(algorithm_name, 'General trading applications')
+
+    def _get_algorithm_performance(self, algorithm_name):
+        """Get expected performance description."""
+        performance = {
+            'LSTMTradingStrategy': 'High Sharpe ratio, good for volatile markets',
+            'TransformerTradingStrategy': 'Excellent pattern recognition, higher computational cost',
+            'EnsembleStackingStrategy': 'Stable returns, reduced drawdown risk',
+            'ReinforcementLearningStrategy': 'Adaptive performance, learning curve required',
+            'AutoencoderAnomalyStrategy': 'High win rate on anomalies, lower frequency signals',
+            'RSIOversoldOverbought': 'Good for ranging markets, moderate returns',
+            'PriceMomentum': 'Strong in trending markets, higher volatility',
+            'MovingAverageCrossover': 'Reliable signals, lower frequency',
+            'AdvancedMLStrategy': 'Balanced performance across market conditions'
+        }
+        return performance.get(algorithm_name, 'Varies by market conditions')
+
+    def _get_algorithm_risk_level(self, algorithm_name):
+        """Get risk level description."""
+        risk_levels = {
+            'LSTMTradingStrategy': 'Medium (depends on market volatility)',
+            'TransformerTradingStrategy': 'Medium-High (complex model)',
+            'EnsembleStackingStrategy': 'Low-Medium (diversified approach)',
+            'ReinforcementLearningStrategy': 'Medium (learning phase risk)',
+            'AutoencoderAnomalyStrategy': 'Low (conservative anomaly detection)',
+            'RSIOversoldOverbought': 'Low-Medium (mean reversion strategies)',
+            'PriceMomentum': 'High (momentum strategies can reverse)',
+            'MovingAverageCrossover': 'Medium (trend-following risk)',
+            'AdvancedMLStrategy': 'Medium (balanced risk approach)'
+        }
+        return risk_levels.get(algorithm_name, 'Medium (standard trading risk)')
+
+    def select_algorithms_by_type(self, algo_type):
+        """Select all algorithms of a specific type."""
+        algorithms = list(self.algorithm_manager.algorithms.keys())
+
+        for algo_name in algorithms:
+            algo_info = self.algorithm_manager.get_algorithm_info(algo_name)
+            if algo_info and algo_info['type'] == algo_type:
+                self.algo_checkbuttons[algo_name].set(True)
+                self.selected_algorithms.add(algo_name)
+
+        self.update_selected_algorithms_display()
+
+    def clear_algorithm_selection(self):
+        """Clear all algorithm selections."""
+        for var in self.algo_checkbuttons.values():
+            var.set(False)
+        self.selected_algorithms.clear()
+        self.update_selected_algorithms_display()
+
+    def run_multi_strategy_backtest(self):
+        """Run consensus-based multi-strategy backtest where all algorithms must agree."""
+        import threading
+        import time
+
+        def run_backtest_thread():
+            """Run the consensus backtest in a separate thread."""
+            try:
+                # Check if data is loaded
+                if self.current_data is None or self.current_data.empty:
+                    self.multi_backtest_status_var.set("❌ No data loaded - please load data first")
+                    return
+
+                # Check if algorithms are selected
+                if not self.selected_algorithms:
+                    self.multi_backtest_status_var.set("❌ No algorithms selected")
+                    return
+
+                # Update status
+                self.multi_backtest_status_var.set("🔄 Starting consensus multi-strategy backtest...")
+                self.root.update()
+
+                print(f"🎯 Starting CONSENSUS backtest on {len(self.selected_algorithms)} algorithms")
+                print(f"📊 Data shape: {self.current_data.shape}")
+                print("📝 Strategy: ALL algorithms must agree on signals")
+
+                # Run individual backtests first
+                individual_results = {}
+                all_signals = {}
+                total_algorithms = len(self.selected_algorithms)
+
+                for i, algo_name in enumerate(self.selected_algorithms):
+                    try:
+                        progress = f"({i+1}/{total_algorithms})"
+                        self.multi_backtest_status_var.set(f"🔄 Analyzing {algo_name}... {progress}")
+                        self.root.update()
+
+                        print(f"🔄 Analyzing {algo_name}... {progress}")
+
+                        # Create algorithm instance
+                        algorithm = self.algorithm_manager.create_algorithm(algo_name)
+
+                        if algorithm:
+                            print(f"✅ Created algorithm: {algo_name}")
+
+                            # Generate signals
+                            signals = algorithm.generate_signals(self.current_data)
+                            all_signals[algo_name] = signals
+
+                            # Run individual backtest
+                            algo_results = self._perform_strategy_backtest(algorithm, self.current_data)
+
+                            if algo_results and 'total_return' in algo_results:
+                                individual_results[algo_name] = algo_results
+                                print(f"✅ {algo_name}: Return={algo_results['total_return']:.4f}, Signals={len(signals)}")
+                            else:
+                                individual_results[algo_name] = {'error': 'Invalid backtest results'}
+                                print(f"❌ {algo_name} backtest failed")
+                        else:
+                            individual_results[algo_name] = {'error': 'Failed to create algorithm'}
+                            print(f"❌ Failed to create algorithm: {algo_name}")
+
+                    except Exception as e:
+                        individual_results[algo_name] = {'error': str(e)}
+                        print(f"❌ Error testing {algo_name}: {e}")
+
+                    self.root.update()
+
+                # Generate consensus signals
+                print("🎯 Generating consensus signals...")
+                self.multi_backtest_status_var.set("🎯 Generating consensus signals...")
+                self.root.update()
+
+                consensus_signals = self._generate_consensus_signals(all_signals)
+
+                if consensus_signals is not None:
+                    # Run consensus backtest
+                    consensus_results = self._perform_consensus_backtest(consensus_signals, self.current_data)
+                    print(f"✅ Consensus backtest: Return={consensus_results['total_return']:.4f}")
+                    print(f"   Signals: {consensus_results['num_trades']}, Win Rate: {consensus_results['win_rate']:.1%}")
+                else:
+                    consensus_results = {'error': 'Failed to generate consensus signals'}
+                    print("❌ Failed to generate consensus signals")
+
+                # Display combined results
+                print("📊 Displaying consensus results...")
+                self._display_consensus_backtest_results(individual_results, consensus_results)
+
+                # Enable Monte Carlo button if we have valid results
+                if consensus_results and 'error' not in consensus_results:
+                    if hasattr(self, 'mc_btn'):
+                        self.mc_btn.config(state='normal')
+                        print("✅ Monte Carlo button enabled")
+
+                # Update status
+                self.multi_backtest_status_var.set("✅ Consensus multi-strategy backtest completed")
+                print("✅ Consensus multi-strategy backtest completed successfully")
+
+            except Exception as e:
+                self.multi_backtest_status_var.set(f"❌ Consensus backtest error: {str(e)}")
+                print(f"❌ Consensus backtest error: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                self.run_multi_backtest_btn.config(state='normal')
+                self.root.update()
+
+        # Run backtest in separate thread
+        backtest_thread = threading.Thread(target=run_backtest_thread, daemon=True)
+        backtest_thread.start()
+
+    def _generate_consensus_signals(self, all_signals):
+        """Generate consensus signals where ALL algorithms must agree."""
+        try:
+            if not all_signals:
+                return None
+
+            # Get the first algorithm's signals as reference
+            first_algo = list(all_signals.keys())[0]
+            consensus_signals = all_signals[first_algo].copy()
+
+            # Apply AND operation across all algorithms
+            for algo_name, signals in all_signals.items():
+                if algo_name == first_algo:
+                    continue
+
+                # Only take positions where both algorithms agree
+                consensus_signals = consensus_signals & signals  # Logical AND
+
+            print(f"🎯 Consensus signals generated: {len(consensus_signals)} total signals")
+            consensus_count = (consensus_signals != 0).sum()
+            print(f"   Agreements: {consensus_count} positions")
+
+            return consensus_signals
+
+        except Exception as e:
+            print(f"❌ Error generating consensus signals: {e}")
+            return None
+
+    def _perform_consensus_backtest(self, consensus_signals, data):
+        """Perform backtest using consensus signals."""
+        try:
+            print(f"🔄 Running consensus backtest...")
+
+            # Validate data
+            if data is None or data.empty:
+                raise ValueError("No data provided for consensus backtest")
+
+            if 'Close' not in data.columns:
+                raise ValueError("Data must contain 'Close' price column")
+
+            if consensus_signals is None or len(consensus_signals) == 0:
+                raise ValueError("No consensus signals provided")
+
+            # Calculate returns using consensus signals
+            price_returns = data['Close'].pct_change().fillna(0)
+            strategy_returns = consensus_signals.shift(1) * price_returns
+
+            # Calculate performance metrics
+            cumulative_returns = (1 + strategy_returns).cumprod()
+            if len(cumulative_returns) == 0:
+                raise ValueError("Failed to calculate cumulative returns")
+
+            total_return = cumulative_returns.iloc[-1] - 1
+
+            # Calculate drawdown
+            running_max = cumulative_returns.expanding().max()
+            drawdown = (cumulative_returns - running_max) / running_max
+            max_drawdown = drawdown.min()
+
+            # Calculate Sharpe ratio
+            sharpe_ratio = 0
+            if len(strategy_returns) > 0:
+                daily_volatility = strategy_returns.std()
+                if daily_volatility > 0:
+                    sharpe_ratio = (strategy_returns.mean() / daily_volatility) * np.sqrt(252)
+
+            # Count trades
+            trade_signals = consensus_signals[consensus_signals != 0]
+            num_trades = len(trade_signals)
+
+            # Calculate win rate
+            winning_trades = len(strategy_returns[strategy_returns > 0])
+            total_trades = len(strategy_returns[strategy_returns != 0])
+            win_rate = winning_trades / total_trades if total_trades > 0 else 0
+
+            # Validate results
+            if not isinstance(total_return, (int, float)) or np.isnan(total_return):
+                total_return = 0.0
+            if not isinstance(max_drawdown, (int, float)) or np.isnan(max_drawdown):
+                max_drawdown = 0.0
+            if not isinstance(sharpe_ratio, (int, float)) or np.isnan(sharpe_ratio):
+                sharpe_ratio = 0.0
+
+            print(f"✅ Consensus backtest metrics: Return={total_return:.4f}, Sharpe={sharpe_ratio:.2f}")
+
+            return {
+                'total_return': total_return,
+                'max_drawdown': max_drawdown,
+                'sharpe_ratio': sharpe_ratio,
+                'num_trades': num_trades,
+                'win_rate': win_rate,
+                'cumulative_returns': cumulative_returns,
+                'signals': consensus_signals,
+                'strategy_returns': strategy_returns
+            }
+
+        except Exception as e:
+            print(f"❌ Consensus backtest error: {e}")
+            raise Exception(f"Consensus backtest failed: {e}")
+
+    def _display_consensus_backtest_results(self, individual_results, consensus_results):
+        """Display consensus-based multi-strategy backtest results."""
+        try:
+            # Clear previous results
+            self.multi_backtest_results_text.config(state='normal')
+            self.multi_backtest_results_text.delete(1.0, tk.END)
+
+            # Filter out errors from individual results
+            valid_results = {name: result for name, result in individual_results.items()
+                           if 'error' not in result}
+
+            # Create results summary
+            result_lines = [
+                "🎯 CONSENSUS MULTI-STRATEGY BACKTEST RESULTS",
+                "=" * 55,
+                "",
+                f"📊 Strategy: ALL {len(self.selected_algorithms)} algorithms must agree",
+                "",
+                "📈 INDIVIDUAL ALGORITHM PERFORMANCE:",
+                "-" * 40
+            ]
+
+            # Add individual results
+            for algo_name, result in valid_results.items():
+                total_return = result.get('total_return', 0) * 100
+                sharpe = result.get('sharpe_ratio', 0)
+                win_rate = result.get('win_rate', 0) * 100
+
+                result_lines.extend([
+                    f"• {algo_name}",
+                    f"   Return: {total_return:.2f}%, Sharpe: {sharpe:.2f}, Win Rate: {win_rate:.1f}%",
+                    ""
+                ])
+
+            # Add consensus results
+            result_lines.extend([
+                "🎯 CONSENSUS STRATEGY PERFORMANCE:",
+                "-" * 40
+            ])
+
+            if 'error' not in consensus_results:
+                consensus_return = consensus_results.get('total_return', 0) * 100
+                consensus_sharpe = consensus_results.get('sharpe_ratio', 0)
+                consensus_win_rate = consensus_results.get('win_rate', 0) * 100
+                consensus_trades = consensus_results.get('num_trades', 0)
+
+                result_lines.extend([
+                    "• Consensus (All Must Agree)",
+                    f"   Return: {consensus_return:.2f}%, Sharpe: {consensus_sharpe:.2f}",
+                    f"   Win Rate: {consensus_win_rate:.1f}%, Trades: {consensus_trades}",
+                    ""
+                ])
+
+                # Compare with best individual
+                if valid_results:
+                    best_individual = max(valid_results.items(),
+                                        key=lambda x: x[1].get('total_return', -999))
+                    best_return = best_individual[1].get('total_return', 0) * 100
+
+                    if consensus_return > best_return:
+                        result_lines.append("💡 Consensus outperforms best individual strategy!")
+                    elif consensus_return > 0:
+                        result_lines.append("✅ Consensus provides stable positive returns")
+                    else:
+                        result_lines.append("⚠️ Consensus may be too conservative - fewer signals")
+            else:
+                result_lines.extend([
+                    f"❌ Consensus Error: {consensus_results['error']}",
+                    ""
+                ])
+
+            # Add summary statistics
+            if valid_results:
+                avg_return = sum(r.get('total_return', 0) * 100 for r in valid_results.values()) / len(valid_results)
+
+                result_lines.extend([
+                    "📊 SUMMARY STATISTICS:",
+                    "-" * 25,
+                    f"Individual Avg Return: {avg_return:.2f}%",
+                    f"Consensus Return: {consensus_results.get('total_return', 0) * 100:.2f}%" if 'error' not in consensus_results else "Consensus: Failed",
+                    "",
+                    "💡 CONSENSUS ADVANTAGES:",
+                    "• Reduces false signals through confirmation",
+                    "• More conservative but potentially more reliable",
+                    "• Lower frequency but higher quality trades",
+                    "• Risk reduction through diversification",
+                    "",
+                    "⚠️ CONSIDERATIONS:",
+                    "• May miss good opportunities",
+                    "• Requires all strategies to agree",
+                    "• Fewer total trades",
+                    "• Best for risk-averse approaches"
+                ])
+
+            # Add any errors
+            errors = [(name, result) for name, result in individual_results.items() if 'error' in result]
+            if errors:
+                result_lines.extend([
+                    "",
+                    "⚠️ ALGORITHMS WITH ERRORS:",
+                    "-" * 30
+                ])
+                for name, result in errors:
+                    result_lines.append(f"• {name}: {result['error']}")
+
+            # Insert results
+            self.multi_backtest_results_text.insert(1.0, "\n".join(result_lines))
+            self.multi_backtest_results_text.config(state='disabled')
+
+        except Exception as e:
+            error_text = f"Error displaying consensus results: {e}"
+            self.multi_backtest_results_text.config(state='normal')
+            self.multi_backtest_results_text.delete(1.0, tk.END)
+            self.multi_backtest_results_text.insert(1.0, error_text)
+            self.multi_backtest_results_text.config(state='disabled')
+
+    def _display_multi_backtest_results(self, results):
+        """Display multi-strategy backtest results."""
+        try:
+            # Clear previous results
+            self.multi_backtest_results_text.config(state='normal')
+            self.multi_backtest_results_text.delete(1.0, tk.END)
+
+            # Sort results by total return
+            sorted_results = sorted(
+                [(name, result) for name, result in results.items()
+                 if 'error' not in result],
+                key=lambda x: x[1].get('total_return', -999),
+                reverse=True
+            )
+
+            # Create results summary
+            result_lines = [
+                "MULTI-STRATEGY BACKTEST RESULTS",
+                "=" * 50,
+                "",
+                f"📊 Tested {len(results)} algorithms on {len(self.current_data)} data points",
+                "",
+                "🏆 PERFORMANCE RANKING:",
+                "-" * 30
+            ]
+
+            # Add individual results
+            for i, (algo_name, result) in enumerate(sorted_results[:10], 1):  # Top 10
+                emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "📊"
+                total_return = result.get('total_return', 0) * 100
+                sharpe = result.get('sharpe_ratio', 0)
+                max_dd = result.get('max_drawdown', 0) * 100
+                win_rate = result.get('win_rate', 0) * 100
+
+                result_lines.extend([
+                    f"{i}. {emoji} {algo_name}",
+                    f"   Total Return: {total_return:.2f}%",
+                    f"   Sharpe Ratio: {sharpe:.2f}",
+                    f"   Max Drawdown: {max_dd:.1f}%",
+                    ""
+                ])
+
+            # Add summary statistics
+            if sorted_results:
+                best_return = sorted_results[0][1].get('total_return', 0) * 100
+                worst_return = sorted_results[-1][1].get('total_return', 0) * 100
+                avg_return = sum(r[1].get('total_return', 0) * 100 for r in sorted_results) / len(sorted_results)
+
+                result_lines.extend([
+                    "📈 SUMMARY STATISTICS:",
+                    "-" * 25,
+                    f"Best Return: {best_return:.2f}%",
+                    f"Worst Return: {worst_return:.2f}%",
+                    f"Average Return: {avg_return:.2f}%",
+                    "",
+                    "💡 INSIGHTS:",
+                    "• Higher Sharpe ratios indicate better risk-adjusted returns",
+                    "• Lower maximum drawdown suggests more stable strategies",
+                    "• Consider combining top performers for ensemble approach"
+                ])
+
+            # Add any errors
+            errors = [(name, result) for name, result in results.items() if 'error' in result]
+            if errors:
+                result_lines.extend([
+                    "",
+                    "⚠️ ALGORITHMS WITH ERRORS:",
+                    "-" * 30
+                ])
+                for name, result in errors:
+                    result_lines.append(f"• {name}: {result['error']}")
+
+            # Insert results
+            self.multi_backtest_results_text.insert(1.0, "\n".join(result_lines))
+            self.multi_backtest_results_text.config(state='disabled')
+
+        except Exception as e:
+            error_text = f"Error displaying multi-backtest results: {e}"
+            self.multi_backtest_results_text.config(state='normal')
+            self.multi_backtest_results_text.delete(1.0, tk.END)
+            self.multi_backtest_results_text.insert(1.0, error_text)
+            self.multi_backtest_results_text.config(state='disabled')
+
+    def update_position_size(self):
+        """Update the position size calculation display."""
+        try:
+            if hasattr(self, 'capital_var') and hasattr(self, 'risk_mgmt_var') and hasattr(self, 'position_size_var'):
+                capital = float(self.capital_var.get())
+                risk_pct = self.risk_mgmt_var.get()
+                position_size = capital * risk_pct
+                position_pct = risk_pct * 100
+                self.position_size_var.set(f"${position_size:.0f} ({position_pct:.1f}%)")
+            else:
+                # Attributes not initialized yet, skip silently
+                pass
+        except (ValueError, AttributeError, TypeError):
+            if hasattr(self, 'position_size_var'):
+                self.position_size_var.set("$0 (0.0%)")
+
+    def update_risk_reward_ratio(self):
+        """Update the risk-reward ratio display."""
+        try:
+            if hasattr(self, 'stop_loss_var') and hasattr(self, 'take_profit_var') and hasattr(self, 'risk_reward_var'):
+                stop_loss = self.stop_loss_var.get()
+                take_profit = self.take_profit_var.get()
+
+                if stop_loss > 0:
+                    ratio = take_profit / stop_loss
+                    self.risk_reward_var.set(f"{ratio:.1f}:1")
+                else:
+                    self.risk_reward_var.set("N/A")
+            else:
+                # Attributes not initialized yet, skip silently
+                pass
+        except (AttributeError, ZeroDivisionError, TypeError):
+            if hasattr(self, 'risk_reward_var'):
+                self.risk_reward_var.set("N/A")
+
+    def quick_load_symbol(self, symbol):
+        """Quick load a popular stock symbol."""
+        self.ticker_var.set(symbol)
+        self.asset_type_var.set("stocks")
+        self.load_data()
+
+    def quick_load_crypto(self, symbol):
+        """Quick load a popular crypto symbol."""
+        self.ticker_var.set(symbol)
+        self.asset_type_var.set("crypto")
+        self.load_data()
+
+    def refresh_algorithms(self):
+        """Refresh the algorithm list."""
+        try:
+            # Re-initialize algorithm manager to pick up new algorithms
+            self.algorithm_manager = AlgorithmManager()
+
+            # Update the algorithm combobox
+            algorithms = list(self.algorithm_manager.algorithms.keys())
+            self.algorithm_combo['values'] = algorithms
+            if algorithms and not self.algorithm_var.get():
+                self.algorithm_var.set(algorithms[0])
+
+            self.update_status("✅ Algorithm list refreshed")
+        except Exception as e:
+            self.update_status(f"❌ Error refreshing algorithms: {e}")
+
+
     def create_monte_carlo_tab(self):
         """Create Monte Carlo analysis tab."""
         self.mc_frame = ttk.Frame(self.notebook)
@@ -1380,7 +2207,11 @@ The system includes a sample_algorithm_template.py file that you can:
     
     def run_monte_carlo(self):
         """Run Monte Carlo analysis."""
+        print("🎲 Starting Monte Carlo simulation...")
+        print(f"   Current results available: {self.current_results is not None}")
+
         if not self.current_results:
+            print("❌ No current results available - need to run backtest first")
             messagebox.showwarning("Warning", "Please run backtest first")
             return
         
@@ -1424,22 +2255,37 @@ The system includes a sample_algorithm_template.py file that you can:
                     raise ValueError(f"Insufficient return data for Monte Carlo simulation. Need at least 3 returns, got {len(returns_data) if returns_data else 0}.")
                 
                 print(f"   Returns sample: {returns_data[:5]} (showing first 5)")
-                
+                print(f"   Number of simulations: {num_sims}")
+                print(f"   Simulation method: {method}")
+
+                # Validate returns data
+                if len(returns_data) == 0:
+                    raise ValueError("No valid returns data found for Monte Carlo simulation")
+
+                # Get initial capital
+                initial_capital = self.current_results.get('initial_capital', 10000)
+                print(f"   Initial capital: ${initial_capital:,.0f}")
+
                 # Run Monte Carlo
+                print("   🔄 Running Monte Carlo simulations...")
                 returns_array = np.array(returns_data)
                 mc_results = random_trade_order_simulation(
                     returns_array,
                     num_simulations=num_sims,
-                    initial_capital=self.current_results['initial_capital'],
+                    initial_capital=initial_capital,
                     simulation_method=method
                 )
-                
+
                 print(f"   ✅ Monte Carlo completed: {mc_results.shape}")
-                
+                print(f"   📊 Results shape: {mc_results.shape}")
+                print(f"   💰 Final values range: ${mc_results.iloc[-1].min():,.0f} - ${mc_results.iloc[-1].max():,.0f}")
+
                 # Plot results
+                print("   📈 Plotting Monte Carlo results...")
                 self.plot_monte_carlo_results(mc_results, method)
-                
+
                 self.update_status("Monte Carlo analysis completed")
+                print("✅ Monte Carlo analysis completed successfully!")
                 
             except Exception as e:
                 print(f"   ❌ Monte Carlo error: {e}")
@@ -1848,32 +2694,45 @@ Win Rate: {results[worst_regime]['win_rate']:.1%}
         if not self.current_results:
             messagebox.showwarning("Warning", "No results to generate report")
             return
-        
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        report = f"""
+
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # Extract metrics with safe access
+            metrics = self.current_results.get('metrics', {})
+            total_trades = metrics.get('total_trades', 0)
+            win_rate = metrics.get('win_rate', 0)
+            avg_return = metrics.get('avg_return', 0)
+            sharpe_ratio = metrics.get('sharpe_ratio', 0)
+            max_drawdown = metrics.get('max_drawdown', 0)
+            profit_factor = metrics.get('profit_factor', 1.0)
+
+            # Handle total return (it's stored as percentage in the results)
+            total_return_pct = self.current_results.get('total_return', 0)
+
+            report = f"""
 MONTE CARLO TRADING STRATEGY ANALYSIS REPORT
 Generated: {timestamp}
 {'='*80}
 
 STRATEGY CONFIGURATION
 {'='*80}
-Algorithm: {self.current_results['algorithm_name']}
+Algorithm: {self.current_results.get('algorithm_name', 'Unknown')}
 Ticker: {self.ticker_var.get()}
 Period: {self.period_var.get()}
 Interval: {self.interval_var.get()}
-Initial Capital: ${self.current_results['initial_capital']:,.2f}
+Initial Capital: ${self.current_results.get('initial_capital', 10000):,.2f}
 
 BACKTEST PERFORMANCE
 {'='*80}
-Final Capital: ${self.current_results['final_capital']:,.2f}
-Total Return: {self.current_results['total_return']:.2%}
-Total Trades: {self.current_results['metrics']['total_trades']}
-Win Rate: {self.current_results['metrics']['win_rate']:.1%}
-Average Return per Trade: {self.current_results['metrics']['avg_return']:.2%}
-Sharpe Ratio: {self.current_results['metrics']['sharpe_ratio']:.3f}
-Maximum Drawdown: {self.current_results['metrics']['max_drawdown']:.2%}
-Profit Factor: {self.current_results['metrics']['profit_factor']:.2f}
+Final Capital: ${self.current_results.get('final_capital', 10000):,.2f}
+Total Return: {total_return_pct:.2f}%
+Total Trades: {total_trades}
+Win Rate: {win_rate:.1%}
+Average Return per Trade: {avg_return:.2%}
+Sharpe Ratio: {sharpe_ratio:.3f}
+Maximum Drawdown: {max_drawdown:.2%}
+Profit Factor: {profit_factor:.2f}
 
 MONTE CARLO ANALYSIS
 {'='*80}
@@ -1887,24 +2746,31 @@ techniques to trading strategy evaluation. The synthetic returns method provides
 realistic assessment of strategy performance across different market scenarios.
 
 Key insights:
-• The strategy shows {'positive' if self.current_results['total_return'] > 0 else 'negative'} performance over the test period
-• Win rate of {self.current_results['metrics']['win_rate']:.1%} indicates {'good' if self.current_results['metrics']['win_rate'] > 50 else 'room for improvement in'} trade selection
-• Sharpe ratio of {self.current_results['metrics']['sharpe_ratio']:.3f} suggests {'attractive' if self.current_results['metrics']['sharpe_ratio'] > 1 else 'modest'} risk-adjusted returns
+• The strategy shows {'positive' if total_return_pct > 0 else 'negative'} performance over the test period
+• Win rate of {win_rate:.1%} indicates {'good' if win_rate > 50 else 'room for improvement in'} trade selection
+• Sharpe ratio of {sharpe_ratio:.3f} suggests {'attractive' if sharpe_ratio > 1 else 'modest'} risk-adjusted returns
 
 DISCLAIMER
 {'='*80}
 This analysis is for educational and research purposes only. Past performance
 does not guarantee future results. All trading involves risk of loss.
 """
-        
-        # Display in results tab
-        self.summary_text.delete(1.0, tk.END)
-        self.summary_text.insert(tk.END, report)
-        
-        # Switch to results tab
-        self.notebook.select(4)  # Results tab is index 4
-        
-        messagebox.showinfo("Report Generated", "Comprehensive analysis report generated and displayed in Results tab")
+
+            # Display in results tab
+            if hasattr(self, 'summary_text'):
+                self.summary_text.delete(1.0, tk.END)
+                self.summary_text.insert(tk.END, report)
+
+                # Switch to results tab
+                if hasattr(self, 'notebook'):
+                    self.notebook.select(4)  # Results tab is index 4
+
+            messagebox.showinfo("Report Generated", "Comprehensive analysis report generated and displayed in Results tab")
+
+        except Exception as e:
+            error_msg = f"Error generating report: {str(e)}"
+            print(error_msg)
+            messagebox.showerror("Report Generation Error", error_msg)
 
     def create_liquidity_tab(self):
         """Create liquidity analysis tab."""
@@ -2482,53 +3348,313 @@ Current Liquidity: {analysis.liquidity_score.iloc[-1]:.1f}/100
 
     def on_risk_change(self, value=None):
         """Handle risk management parameter changes."""
-        self.risk_label.config(text=f"{self.risk_mgmt_var.get():.1f}%")
-        self.validate_strategy_params()
+        try:
+            if hasattr(self, 'risk_mgmt_var') and hasattr(self, 'risk_label'):
+                risk_pct = self.risk_mgmt_var.get() * 100
+                self.risk_label.config(text=f"{risk_pct:.1f}%")
+
+                # Update position size calculation
+                self.update_position_size()
+
+                # Update risk-reward ratio
+                self.update_risk_reward_ratio()
+
+                self.validate_strategy_params()
+        except (AttributeError, TypeError):
+            pass
 
     def on_stop_change(self, value=None):
         """Handle stop loss parameter changes."""
-        self.stop_label.config(text=f"{self.stop_loss_var.get():.1f}%")
-        self.validate_strategy_params()
+        try:
+            if hasattr(self, 'stop_loss_var') and hasattr(self, 'stop_label'):
+                stop_pct = self.stop_loss_var.get() * 100
+                self.stop_label.config(text=f"{stop_pct:.1f}%")
+
+                # Update risk-reward ratio
+                self.update_risk_reward_ratio()
+
+                self.validate_strategy_params()
+        except (AttributeError, TypeError):
+            pass
 
     def on_profit_change(self, value=None):
         """Handle take profit parameter changes."""
-        self.profit_label.config(text=f"{self.take_profit_var.get():.1f}%")
-        self.validate_strategy_params()
+        try:
+            if hasattr(self, 'take_profit_var') and hasattr(self, 'profit_label'):
+                profit_pct = self.take_profit_var.get() * 100
+                self.profit_label.config(text=f"{profit_pct:.1f}%")
+
+                # Update risk-reward ratio
+                self.update_risk_reward_ratio()
+
+                self.validate_strategy_params()
+        except (AttributeError, TypeError):
+            pass
+
+    def run_strategy_backtest(self):
+        """Run a quick backtest of the selected strategy with loaded data (threaded)."""
+        import threading
+
+        def run_single_backtest_thread():
+            """Run the single backtest in a separate thread to prevent GUI freezing."""
+            try:
+                # Update status
+                self.backtest_status_var.set("🔄 Starting backtest...")
+                self.root.update()
+
+                # Check if we have data loaded
+                if self.current_data is None or self.current_data.empty:
+                    self.backtest_status_var.set("❌ No data loaded - please load data first")
+                    return
+
+                # Get selected algorithm
+                algorithm_name = self.algorithm_var.get()
+                if not algorithm_name:
+                    self.backtest_status_var.set("❌ No algorithm selected")
+                    return
+
+                print(f"🔄 Starting backtest for {algorithm_name}")
+                print(f"📊 Data shape: {self.current_data.shape}")
+
+                # Get algorithm instance
+                if algorithm_name not in self.algorithm_manager.algorithms:
+                    self.backtest_status_var.set(f"❌ Algorithm '{algorithm_name}' not found")
+                    print(f"❌ Algorithm '{algorithm_name}' not found")
+                    return
+
+                algorithm = self.algorithm_manager.algorithms[algorithm_name]
+                print(f"✅ Found algorithm: {algorithm_name}")
+
+                # Update status
+                self.backtest_status_var.set(f"🔄 Running backtest on {algorithm_name}...")
+                self.root.update()
+
+                # Run the backtest
+                results = self._perform_strategy_backtest(algorithm, self.current_data)
+
+                # Check if results are valid
+                if results and 'total_return' in results:
+                    print(f"✅ Backtest completed: {results['total_return']:.4f} return")
+
+                    # Display results
+                    self._display_backtest_results(results)
+
+                    # Update status
+                    self.backtest_status_var.set("✅ Backtest completed")
+                else:
+                    self.backtest_status_var.set("❌ Backtest failed: Invalid results")
+                    print("❌ Backtest failed: Invalid results")
+
+            except Exception as e:
+                self.backtest_status_var.set(f"❌ Backtest error: {str(e)}")
+                print(f"❌ Backtest error: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                self.run_backtest_btn.config(state='normal')
+                self.root.update()
+
+        # Run backtest in separate thread to prevent GUI freezing
+        backtest_thread = threading.Thread(target=run_single_backtest_thread, daemon=True)
+        backtest_thread.start()
+
+    def _perform_strategy_backtest(self, algorithm, data):
+        """Perform the actual backtest calculation with enhanced error handling."""
+        try:
+            print(f"🔄 Generating signals for {algorithm.__class__.__name__}...")
+
+            # Validate data
+            if data is None or data.empty:
+                raise ValueError("No data provided for backtest")
+
+            if 'Close' not in data.columns:
+                raise ValueError("Data must contain 'Close' price column")
+
+            # Generate signals
+            signals = algorithm.generate_signals(data)
+
+            if signals is None or len(signals) == 0:
+                raise ValueError("Algorithm generated no signals")
+
+            print(f"✅ Generated {len(signals)} signals")
+
+            # Calculate returns
+            price_returns = data['Close'].pct_change().fillna(0)
+            strategy_returns = signals.shift(1) * price_returns  # Shift signals by 1 to avoid lookahead bias
+
+            # Validate returns calculation
+            if strategy_returns is None or len(strategy_returns) == 0:
+                raise ValueError("Failed to calculate strategy returns")
+
+            # Calculate performance metrics
+            cumulative_returns = (1 + strategy_returns).cumprod()
+            if len(cumulative_returns) == 0:
+                raise ValueError("Failed to calculate cumulative returns")
+
+            total_return = cumulative_returns.iloc[-1] - 1
+
+            # Calculate drawdown
+            running_max = cumulative_returns.expanding().max()
+            drawdown = (cumulative_returns - running_max) / running_max
+            max_drawdown = drawdown.min()
+
+            # Calculate Sharpe ratio (assuming 252 trading days)
+            sharpe_ratio = 0
+            if len(strategy_returns) > 0:
+                daily_volatility = strategy_returns.std()
+                if daily_volatility > 0:
+                    sharpe_ratio = (strategy_returns.mean() / daily_volatility) * np.sqrt(252)
+
+            # Count trades
+            trade_signals = signals[signals != 0]
+            num_trades = len(trade_signals)
+
+            # Calculate win rate
+            winning_trades = len(strategy_returns[strategy_returns > 0])
+            total_trades = len(strategy_returns[strategy_returns != 0])
+            win_rate = winning_trades / total_trades if total_trades > 0 else 0
+
+            # Validate results
+            if not isinstance(total_return, (int, float)) or np.isnan(total_return):
+                total_return = 0.0
+
+            if not isinstance(max_drawdown, (int, float)) or np.isnan(max_drawdown):
+                max_drawdown = 0.0
+
+            if not isinstance(sharpe_ratio, (int, float)) or np.isnan(sharpe_ratio):
+                sharpe_ratio = 0.0
+
+            print(f"✅ Backtest metrics calculated: Return={total_return:.4f}, Sharpe={sharpe_ratio:.2f}")
+
+            return {
+                'total_return': total_return,
+                'max_drawdown': max_drawdown,
+                'sharpe_ratio': sharpe_ratio,
+                'num_trades': num_trades,
+                'win_rate': win_rate,
+                'cumulative_returns': cumulative_returns,
+                'signals': signals,
+                'strategy_returns': strategy_returns
+            }
+
+        except Exception as e:
+            raise Exception(f"Backtest calculation failed: {e}")
+
+    def _display_backtest_results(self, results):
+        """Display backtest results in the text area."""
+        try:
+            # Clear previous results
+            self.backtest_results_text.config(state='normal')
+            self.backtest_results_text.delete(1.0, tk.END)
+
+            # Format results
+            result_text = f"""STRATEGY BACKTEST RESULTS
+{'='*40}
+
+📊 Performance Metrics:
+   Total Return:     {results['total_return']:.2%}
+   Max Drawdown:     {results['max_drawdown']:.2%}
+   Sharpe Ratio:     {results['sharpe_ratio']:.2f}
+   Number of Trades: {results['num_trades']}
+   Win Rate:         {results['win_rate']:.1%}
+
+📈 Trade Statistics:
+   Best Trade:       {results['strategy_returns'].max():.2%}
+   Worst Trade:      {results['strategy_returns'].min():.2%}
+   Avg Trade:        {results['strategy_returns'].mean():.2%}
+
+💡 Strategy Analysis:
+"""
+
+            # Add strategy insights
+            if results['sharpe_ratio'] > 1.0:
+                result_text += "   ✅ Good risk-adjusted returns\n"
+            elif results['sharpe_ratio'] > 0.5:
+                result_text += "   ⚠️ Moderate risk-adjusted returns\n"
+            else:
+                result_text += "   ❌ Poor risk-adjusted returns\n"
+
+            if results['win_rate'] > 0.6:
+                result_text += "   ✅ High win rate\n"
+            elif results['win_rate'] > 0.5:
+                result_text += "   ⚠️ Moderate win rate\n"
+            else:
+                result_text += "   ❌ Low win rate - consider strategy improvements\n"
+
+            if abs(results['max_drawdown']) < 0.15:
+                result_text += "   ✅ Reasonable drawdown\n"
+            else:
+                result_text += "   ⚠️ High drawdown - consider risk management\n"
+
+            # Insert results
+            self.backtest_results_text.insert(1.0, result_text)
+            self.backtest_results_text.config(state='disabled')
+
+        except Exception as e:
+            error_text = f"Error displaying results: {e}"
+            self.backtest_results_text.config(state='normal')
+            self.backtest_results_text.delete(1.0, tk.END)
+            self.backtest_results_text.insert(1.0, error_text)
+            self.backtest_results_text.config(state='disabled')
 
     def validate_strategy_params(self):
         """Validate strategy parameters and provide feedback."""
-        risk = self.risk_mgmt_var.get()
-        stop = self.stop_loss_var.get()
-        profit = self.take_profit_var.get()
+        try:
+            if not (hasattr(self, 'risk_mgmt_var') and hasattr(self, 'stop_loss_var') and
+                    hasattr(self, 'take_profit_var') and hasattr(self, 'strategy_status_var')):
+                return  # Skip validation if attributes not initialized yet
 
-        issues = []
-        recommendations = []
+            risk = self.risk_mgmt_var.get()
+            stop = self.stop_loss_var.get()
+            profit = self.take_profit_var.get()
 
-        # Validate risk management
-        if risk > profit:
-            issues.append("Risk per trade exceeds take profit target")
-        if stop < risk * 2:
-            recommendations.append("Stop loss should be 2-3x risk per trade")
+            issues = []
+            recommendations = []
 
-        # Validate risk-reward ratio
-        risk_reward = profit / stop if stop > 0 else 0
-        if risk_reward < 1.5:
-            recommendations.append("Risk-reward ratio below 1.5:1")
-        elif risk_reward > 5:
-            recommendations.append("Risk-reward ratio above 5:1 may be unrealistic")
+            # Validate risk management
+            if risk > profit:
+                issues.append("Risk per trade exceeds take profit target")
+            if stop < risk * 2:
+                recommendations.append("Stop loss should be 2-3x risk per trade")
 
-        # Determine status
-        if issues:
-            status = f"⚠️ Strategy: {len(issues)} critical issues"
-            color = "red"
-        elif recommendations:
-            status = f"💡 Strategy: {len(recommendations)} optimizations suggested"
-            color = "blue"
-        else:
-            status = "✅ Strategy: Optimal risk management"
-            color = "green"
+            # Validate risk-reward ratio
+            risk_reward = profit / stop if stop > 0 else 0
+            if risk_reward < 1.5:
+                recommendations.append("Risk-reward ratio below 1.5:1")
+            elif risk_reward > 5:
+                recommendations.append("Risk-reward ratio above 5:1 may be unrealistic")
 
-        self.strategy_status_var.set(status)
+            # Determine status
+            if issues:
+                status = f"⚠️ Strategy: {len(issues)} critical issues"
+                color = "red"
+            elif recommendations:
+                status = f"💡 Strategy: {len(recommendations)} optimizations suggested"
+                color = "blue"
+            else:
+                status = "✅ Strategy: Optimal risk management"
+                color = "green"
+
+            # Update status display
+            self.strategy_status_var.set(status)
+
+            # Update validation text area if it exists
+            if hasattr(self, 'validation_text'):
+                validation_msg = ""
+                if issues:
+                    validation_msg += "Critical Issues:\n" + "\n".join(f"• {issue}" for issue in issues) + "\n\n"
+                if recommendations:
+                    validation_msg += "Recommendations:\n" + "\n".join(f"• {rec}" for rec in recommendations)
+
+                # Clear and update the text widget
+                self.validation_text.config(state='normal')
+                self.validation_text.delete(1.0, tk.END)
+                self.validation_text.insert(1.0, validation_msg)
+                self.validation_text.config(state='disabled')
+
+        except (AttributeError, TypeError, ZeroDivisionError):
+            # Skip validation if there are any issues
+            pass
 
     def on_mc_preset_change(self, event=None):
         """Handle Monte Carlo preset changes."""
@@ -2983,6 +4109,9 @@ def main():
         # Center the window properly with title bar visible
         # Wait a bit for window to initialize, then center
         root.after(100, lambda: center_window(root, 1400, 900))
+
+        # Force window to be visible and in foreground
+        root.after(200, lambda: root.deiconify())
 
         # Start the GUI event loop
         root.mainloop()

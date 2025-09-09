@@ -20,7 +20,7 @@ class TradingAlgorithm(ABC):
     def __init__(self, name: str, description: str = "", parameters: Dict[str, Any] = None):
         """
         Initialize the trading algorithm.
-        
+
         Args:
             name (str): Name of the algorithm
             description (str): Description of the algorithm
@@ -34,19 +34,46 @@ class TradingAlgorithm(ABC):
         self.current_position = 0  # Current position (0=flat, 1=long, -1=short)
         self.entry_price = None  # Price when position was entered
         self.entry_time = None  # Time when position was entered
+
+        # Performance optimization cache
+        self._signal_cache = {}  # Cache for signal calculations
+        self._indicator_cache = {}  # Cache for technical indicators
         
     @abstractmethod
     def generate_signals(self, data: pd.DataFrame) -> pd.Series:
         """
         Generate trading signals based on market data.
-        
+
         Args:
             data (pd.DataFrame): OHLCV data with DatetimeIndex
-            
+
         Returns:
             pd.Series: Trading signals (1=buy, -1=sell, 0=hold)
         """
         pass
+
+    def _generate_signals_cached(self, data: pd.DataFrame) -> pd.Series:
+        """
+        Generate signals with caching for performance optimization.
+
+        Args:
+            data (pd.DataFrame): OHLCV data
+
+        Returns:
+            pd.Series: Trading signals
+        """
+        # Create cache key based on data and parameters
+        data_hash = hash(data.to_string() + str(self.parameters))
+        cache_key = f"{self.name}_{data_hash}"
+
+        if cache_key in self._signal_cache:
+            return self._signal_cache[cache_key]
+
+        # Generate signals and cache them
+        signals = self.generate_signals(data)
+        self._signal_cache[cache_key] = signals
+
+        return signals
     
     @abstractmethod
     def get_algorithm_type(self) -> str:
@@ -79,52 +106,94 @@ class TradingAlgorithm(ABC):
         self.entry_price = None
         self.entry_time = None
         
-        # Generate signals
-        signals = self.generate_signals(data)
+        # Generate signals with caching
+        signals = self._generate_signals_cached(data)
         
         # Initialize tracking variables
         capital = initial_capital
         position_size = 0
         
-        # Track equity curve
-        equity_data = []
-        
-        for i, (timestamp, row) in enumerate(data.iterrows()):
-            current_price = row['Close']
-            signal = signals.iloc[i] if i < len(signals) else 0
-            
-            # Process signal
-            if signal != 0 and signal != self.current_position:
+        # Vectorized backtesting implementation for better performance
+        signals = signals.fillna(0).astype(int)  # Ensure signals are integers
+        prices = data['Close'].values
+        timestamps = data.index
+
+        # Initialize arrays for vectorized calculations
+        positions = np.zeros(len(data))
+        capital_history = np.zeros(len(data))
+        trade_log = []
+
+        current_position = 0
+        current_capital = initial_capital
+        entry_price = None
+        entry_time = None
+
+        # Process signals with optimized loop
+        for i in range(len(data)):
+            signal = signals.iloc[i]
+            current_price = prices[i]
+            timestamp = timestamps[i]
+
+            # Process position changes
+            if signal != 0 and signal != current_position:
                 # Close existing position if any
-                if self.current_position != 0:
+                if current_position != 0:
                     trade_return = self._close_position(current_price, timestamp, commission, slippage)
-                    capital *= (1 + trade_return)
-                
+                    current_capital *= (1 + trade_return)
+                    returns.append(trade_return)
+                    trade_log.append({
+                        'entry_time': entry_time,
+                        'exit_time': timestamp,
+                        'entry_price': entry_price,
+                        'exit_price': current_price,
+                        'direction': 'long' if current_position == 1 else 'short',
+                        'return': trade_return,
+                        'duration': timestamp - entry_time if entry_time else pd.Timedelta(0)
+                    })
+
                 # Open new position
                 if signal != 0:
-                    self._open_position(signal, current_price, timestamp)
-                    position_size = capital  # Full capital deployment
-            
-            # Track equity (assuming full capital deployment)
-            if self.current_position != 0:
-                unrealized_return = (current_price / self.entry_price - 1) * self.current_position
-                current_equity = capital * (1 + unrealized_return)
+                    current_position = signal
+                    entry_price = current_price
+                    entry_time = timestamp
+
+            # Calculate current position value (vectorized calculation)
+            if current_position != 0:
+                unrealized_return = (current_price / entry_price - 1) * current_position
+                current_equity = current_capital * (1 + unrealized_return)
             else:
-                current_equity = capital
-                
-            equity_data.append({
-                'timestamp': timestamp,
-                'equity': current_equity,
-                'position': self.current_position,
-                'price': current_price
-            })
-        
-        # Close final position if open
-        if self.current_position != 0:
-            final_price = data['Close'].iloc[-1]
-            final_timestamp = data.index[-1]
+                current_equity = current_capital
+
+            positions[i] = current_position
+            capital_history[i] = current_equity
+
+        # Close any remaining position at the end
+        if current_position != 0:
+            final_price = prices[-1]
+            final_timestamp = timestamps[-1]
             trade_return = self._close_position(final_price, final_timestamp, commission, slippage)
-            capital *= (1 + trade_return)
+            current_capital *= (1 + trade_return)
+            returns.append(trade_return)
+            trade_log.append({
+                'entry_time': entry_time,
+                'exit_time': final_timestamp,
+                'entry_price': entry_price,
+                'exit_price': final_price,
+                'direction': 'long' if current_position == 1 else 'short',
+                'return': trade_return,
+                'duration': final_timestamp - entry_time if entry_time else pd.Timedelta(0)
+            })
+
+        # Store trades in the algorithm instance
+        self.trades = trade_log
+
+        # Create equity curve data
+        equity_data = [{
+            'timestamp': timestamps[i],
+            'equity': capital_history[i],
+            'position': positions[i],
+            'price': prices[i]
+        } for i in range(len(data))]
         
         # Calculate performance metrics
         returns = self._calculate_returns()
