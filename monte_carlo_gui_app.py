@@ -37,6 +37,14 @@ from algorithms.algorithm_manager import AlgorithmManager
 from market_scenario_simulation import generate_market_scenarios, test_strategy_across_scenarios
 from portfolio_optimization import PortfolioOptimizer
 
+# Import liquidity analyzer
+try:
+    from liquidity_market_analyzer import LiquidityMarketAnalyzer, quick_analysis
+    LIQUIDITY_AVAILABLE = True
+except ImportError:
+    LIQUIDITY_AVAILABLE = False
+    print("⚠️ Liquidity analyzer not available")
+
 class MonteCarloGUI:
     """Main GUI Application for Monte Carlo Trading Analysis."""
     
@@ -44,18 +52,68 @@ class MonteCarloGUI:
         """Initialize the GUI application."""
         self.root = root
         self.root.title("Monte Carlo Trading Strategy Analyzer")
-        self.root.geometry("1400x900")
-        
+
+        # Window positioning and state management
+        self.setup_window_properties()
+
         # Initialize data
         self.current_data = None
         self.current_results = None
         self.algorithm_manager = AlgorithmManager()
-        
+        self.current_liquidity_analysis = None
+
+        # Initialize liquidity analyzer if available
+        if LIQUIDITY_AVAILABLE:
+            self.liquidity_analyzer = LiquidityMarketAnalyzer()
+
         # Create main interface
         self.create_widgets()
-        
+
         # Status
         self.update_status("Ready - Select data and algorithm to begin")
+
+    def setup_window_properties(self):
+        """Set up window properties for proper display and behavior."""
+        try:
+            # Set window size and initial position
+            self.root.geometry("1400x900+100+50")  # Start with reasonable position
+
+            # Set minimum window size to prevent issues
+            self.root.minsize(1200, 800)
+
+            # Window state management
+            self.root.state('normal')  # Ensure window is not minimized
+
+            # Handle window close event properly
+            self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+            # Bind window events for better management
+            self.root.bind('<Configure>', self.on_window_configure)
+
+            # Force window to be visible
+            self.root.lift()
+            self.root.focus_force()
+
+            print("✅ Window properties configured successfully")
+
+        except Exception as e:
+            print(f"⚠️ Window setup warning: {e}")
+            # Continue with default settings
+
+    def on_closing(self):
+        """Handle window close event."""
+        try:
+            # Clean up any running threads or processes
+            print("🛑 Closing GUI application...")
+            self.root.quit()
+            self.root.destroy()
+        except:
+            self.root.destroy()
+
+    def on_window_configure(self, event):
+        """Handle window resize/move events."""
+        # Optional: Could save window position for future sessions
+        pass
     
     def create_widgets(self):
         """Create all GUI widgets."""
@@ -78,10 +136,22 @@ class MonteCarloGUI:
         # Tab 5: Results & Visualization
         self.create_results_tab()
         
-        # Status bar
+        # Tab 6: Liquidity Analysis (if available)
+        if LIQUIDITY_AVAILABLE:
+            self.create_liquidity_tab()
+        
+        # Status bar with reposition button
+        status_frame = ttk.Frame(self.root)
+        status_frame.pack(side='bottom', fill='x')
+
+        # Status label
         self.status_var = tk.StringVar()
-        self.status_bar = ttk.Label(self.root, textvariable=self.status_var, relief='sunken')
-        self.status_bar.pack(side='bottom', fill='x')
+        self.status_bar = ttk.Label(status_frame, textvariable=self.status_var, relief='sunken')
+        self.status_bar.pack(side='left', fill='x', expand=True)
+
+        # Reposition button
+        ttk.Button(status_frame, text="🔄 Reposition Window",
+                  command=lambda: reposition_window(self.root)).pack(side='right', padx=5)
     
     def create_data_tab(self):
         """Create data and strategy selection tab."""
@@ -134,32 +204,83 @@ class MonteCarloGUI:
         # Strategy Selection Section
         strategy_section = ttk.LabelFrame(self.data_frame, text="Trading Strategy", padding=10)
         strategy_section.pack(fill='x', padx=10, pady=5)
-        
+
+        # Strategy Parameter Presets
+        ttk.Label(strategy_section, text="Strategy Preset:").grid(row=0, column=0, sticky='w', padx=5)
+        self.strategy_preset_var = tk.StringVar(value="Balanced")
+        preset_combo = ttk.Combobox(strategy_section, textvariable=self.strategy_preset_var,
+                                  values=["Conservative", "Balanced", "Aggressive", "Custom"], width=12)
+        preset_combo.grid(row=0, column=1, padx=5)
+        preset_combo.bind('<<ComboboxSelected>>', self.on_strategy_preset_change)
+
         # Algorithm selection
-        ttk.Label(strategy_section, text="Algorithm:").grid(row=0, column=0, sticky='w', padx=5)
+        ttk.Label(strategy_section, text="Algorithm:").grid(row=0, column=2, sticky='w', padx=5)
         algorithms = list(self.algorithm_manager.algorithms.keys())
         self.algorithm_var = tk.StringVar(value=algorithms[0] if algorithms else "")
         self.algorithm_combo = ttk.Combobox(strategy_section, textvariable=self.algorithm_var,
                                            values=algorithms, width=20)
-        self.algorithm_combo.grid(row=0, column=1, padx=5)
+        self.algorithm_combo.grid(row=0, column=3, padx=5)
+        self.algorithm_combo.bind('<<ComboboxSelected>>', self.on_algorithm_change)
         
         # Upload algorithm button
         upload_btn = ttk.Button(strategy_section, text="Upload Algorithm", command=self.upload_algorithm)
-        upload_btn.grid(row=0, column=2, padx=5)
-        
+        upload_btn.grid(row=1, column=0, padx=5, pady=2, sticky='w')
+
         # Help button for algorithm creation
         help_btn = ttk.Button(strategy_section, text="Help", command=self.show_algorithm_help)
-        help_btn.grid(row=1, column=0, padx=5, pady=5, sticky='w')
-        
+        help_btn.grid(row=1, column=1, padx=5, pady=2, sticky='w')
+
+        # Advanced Strategy Parameters
+        params_section = ttk.LabelFrame(self.data_frame, text="Advanced Strategy Parameters", padding=10)
+        params_section.pack(fill='x', padx=10, pady=5)
+
+        # Risk Management Parameters
+        ttk.Label(params_section, text="Risk Management:").grid(row=0, column=0, sticky='w', padx=5)
+        self.risk_mgmt_var = tk.DoubleVar(value=0.02)  # 2% risk per trade
+        risk_frame = ttk.Frame(params_section)
+        risk_frame.grid(row=0, column=1, padx=5)
+        risk_scale = ttk.Scale(risk_frame, from_=0.005, to=0.10, orient='horizontal',
+                              variable=self.risk_mgmt_var, command=self.on_risk_change)
+        risk_scale.pack(side='left', fill='x', expand=True)
+        self.risk_label = ttk.Label(risk_frame, text="2.0%")
+        self.risk_label.pack(side='right')
+
+        # Stop Loss Parameters
+        ttk.Label(params_section, text="Stop Loss:").grid(row=0, column=2, sticky='w', padx=5)
+        self.stop_loss_var = tk.DoubleVar(value=0.05)  # 5% stop loss
+        stop_frame = ttk.Frame(params_section)
+        stop_frame.grid(row=0, column=3, padx=5)
+        stop_scale = ttk.Scale(stop_frame, from_=0.01, to=0.15, orient='horizontal',
+                              variable=self.stop_loss_var, command=self.on_stop_change)
+        stop_scale.pack(side='left', fill='x', expand=True)
+        self.stop_label = ttk.Label(stop_frame, text="5.0%")
+        self.stop_label.pack(side='right')
+
+        # Take Profit Parameters
+        ttk.Label(params_section, text="Take Profit:").grid(row=0, column=4, sticky='w', padx=5)
+        self.take_profit_var = tk.DoubleVar(value=0.10)  # 10% take profit
+        profit_frame = ttk.Frame(params_section)
+        profit_frame.grid(row=0, column=5, padx=5)
+        profit_scale = ttk.Scale(profit_frame, from_=0.02, to=0.30, orient='horizontal',
+                                variable=self.take_profit_var, command=self.on_profit_change)
+        profit_scale.pack(side='left', fill='x', expand=True)
+        self.profit_label = ttk.Label(profit_frame, text="10.0%")
+        self.profit_label.pack(side='right')
+
         # Initial capital
-        ttk.Label(strategy_section, text="Initial Capital:").grid(row=0, column=3, sticky='w', padx=5)
+        ttk.Label(params_section, text="Initial Capital:").grid(row=1, column=0, sticky='w', padx=5, pady=5)
         self.capital_var = tk.StringVar(value="10000")
-        capital_entry = ttk.Entry(strategy_section, textvariable=self.capital_var, width=10)
-        capital_entry.grid(row=0, column=4, padx=5)
-        
+        capital_entry = ttk.Entry(params_section, textvariable=self.capital_var, width=10)
+        capital_entry.grid(row=1, column=1, padx=5)
+
+        # Strategy Status Indicator
+        self.strategy_status_var = tk.StringVar(value="✅ Strategy: Balanced configuration")
+        ttk.Label(params_section, textvariable=self.strategy_status_var,
+                 foreground="green", font=('TkDefaultFont', 8)).grid(row=1, column=2, columnspan=4, sticky='w')
+
         # Run backtest button
-        backtest_btn = ttk.Button(strategy_section, text="Run Backtest", command=self.run_backtest)
-        backtest_btn.grid(row=0, column=5, padx=10)
+        backtest_btn = ttk.Button(params_section, text="Run Backtest", command=self.run_backtest)
+        backtest_btn.grid(row=1, column=5, padx=10)
         
         # Results display
         self.results_text = tk.Text(self.data_frame, height=15, width=80)
@@ -173,27 +294,66 @@ class MonteCarloGUI:
         """Create Monte Carlo analysis tab."""
         self.mc_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.mc_frame, text="🎲 Monte Carlo")
-        
+
+        # Monte Carlo Parameter Presets
+        preset_section = ttk.LabelFrame(self.mc_frame, text="Monte Carlo Presets", padding=10)
+        preset_section.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(preset_section, text="Analysis Preset:").grid(row=0, column=0, sticky='w', padx=5)
+        self.mc_preset_var = tk.StringVar(value="Balanced")
+        preset_combo = ttk.Combobox(preset_section, textvariable=self.mc_preset_var,
+                                  values=["Conservative", "Balanced", "Aggressive", "Custom"], width=12)
+        preset_combo.grid(row=0, column=1, padx=5)
+        preset_combo.bind('<<ComboboxSelected>>', self.on_mc_preset_change)
+
         # Monte Carlo Settings
         mc_settings = ttk.LabelFrame(self.mc_frame, text="Monte Carlo Settings", padding=10)
         mc_settings.pack(fill='x', padx=10, pady=5)
-        
+
         # Number of simulations
         ttk.Label(mc_settings, text="Simulations:").grid(row=0, column=0, sticky='w', padx=5)
         self.num_sims_var = tk.StringVar(value="1000")
         sims_entry = ttk.Entry(mc_settings, textvariable=self.num_sims_var, width=10)
         sims_entry.grid(row=0, column=1, padx=5)
-        
+
         # Simulation method
         ttk.Label(mc_settings, text="Method:").grid(row=0, column=2, sticky='w', padx=5)
         self.sim_method_var = tk.StringVar(value="synthetic_returns")
         method_combo = ttk.Combobox(mc_settings, textvariable=self.sim_method_var,
                                    values=["synthetic_returns", "statistical", "random"], width=15)
         method_combo.grid(row=0, column=3, padx=5)
-        
+        method_combo.bind('<<ComboboxSelected>>', self.on_mc_method_change)
+
+        # Confidence Level
+        ttk.Label(mc_settings, text="Confidence Level:").grid(row=1, column=0, sticky='w', padx=5, pady=5)
+        self.confidence_var = tk.DoubleVar(value=0.95)  # 95% confidence
+        conf_frame = ttk.Frame(mc_settings)
+        conf_frame.grid(row=1, column=1, padx=5)
+        conf_scale = ttk.Scale(conf_frame, from_=0.90, to=0.99, orient='horizontal',
+                              variable=self.confidence_var, command=self.on_confidence_change)
+        conf_scale.pack(side='left', fill='x', expand=True)
+        self.confidence_label = ttk.Label(conf_frame, text="95%")
+        self.confidence_label.pack(side='right')
+
+        # Risk-Free Rate
+        ttk.Label(mc_settings, text="Risk-Free Rate:").grid(row=1, column=2, sticky='w', padx=5, pady=5)
+        self.risk_free_var = tk.DoubleVar(value=0.045)  # 4.5%
+        rf_frame = ttk.Frame(mc_settings)
+        rf_frame.grid(row=1, column=3, padx=5)
+        rf_scale = ttk.Scale(rf_frame, from_=0.01, to=0.08, orient='horizontal',
+                            variable=self.risk_free_var, command=self.on_risk_free_change)
+        rf_scale.pack(side='left', fill='x', expand=True)
+        self.risk_free_label = ttk.Label(rf_frame, text="4.5%")
+        self.risk_free_label.pack(side='right')
+
         # Run Monte Carlo button
         self.mc_btn = ttk.Button(mc_settings, text="Run Monte Carlo", command=self.run_monte_carlo, state='disabled')
-        self.mc_btn.grid(row=0, column=4, padx=10)
+        self.mc_btn.grid(row=0, column=4, rowspan=2, padx=10)
+
+        # Monte Carlo Status Indicator
+        self.mc_status_var = tk.StringVar(value="✅ Monte Carlo: Balanced analysis")
+        ttk.Label(mc_settings, textvariable=self.mc_status_var,
+                 foreground="green", font=('TkDefaultFont', 8)).grid(row=2, column=0, columnspan=4, sticky='w', pady=5)
         
         # Results frame with embedded matplotlib
         self.mc_results_frame = ttk.Frame(self.mc_frame)
@@ -208,26 +368,64 @@ class MonteCarloGUI:
         """Create market scenarios analysis tab."""
         self.scenarios_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.scenarios_frame, text="🌍 Scenarios")
-        
+
+        # Scenario Parameter Presets
+        preset_section = ttk.LabelFrame(self.scenarios_frame, text="Scenario Analysis Presets", padding=10)
+        preset_section.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(preset_section, text="Scenario Preset:").grid(row=0, column=0, sticky='w', padx=5)
+        self.scenario_preset_var = tk.StringVar(value="Balanced")
+        preset_combo = ttk.Combobox(preset_section, textvariable=self.scenario_preset_var,
+                                  values=["Conservative", "Balanced", "Aggressive", "Custom"], width=12)
+        preset_combo.grid(row=0, column=1, padx=5)
+        preset_combo.bind('<<ComboboxSelected>>', self.on_scenario_preset_change)
+
         # Scenario Settings
         scenario_settings = ttk.LabelFrame(self.scenarios_frame, text="Market Scenario Settings", padding=10)
         scenario_settings.pack(fill='x', padx=10, pady=5)
-        
+
         # Number of scenarios
         ttk.Label(scenario_settings, text="Scenarios:").grid(row=0, column=0, sticky='w', padx=5)
         self.num_scenarios_var = tk.StringVar(value="100")
         scenarios_entry = ttk.Entry(scenario_settings, textvariable=self.num_scenarios_var, width=10)
         scenarios_entry.grid(row=0, column=1, padx=5)
-        
+
         # Scenario length
         ttk.Label(scenario_settings, text="Length (days):").grid(row=0, column=2, sticky='w', padx=5)
         self.scenario_length_var = tk.StringVar(value="126")
         length_entry = ttk.Entry(scenario_settings, textvariable=self.scenario_length_var, width=10)
         length_entry.grid(row=0, column=3, padx=5)
-        
+
+        # Volatility Scaling
+        ttk.Label(scenario_settings, text="Volatility Scale:").grid(row=1, column=0, sticky='w', padx=5, pady=5)
+        self.volatility_scale_var = tk.DoubleVar(value=1.0)  # Normal volatility
+        vol_frame = ttk.Frame(scenario_settings)
+        vol_frame.grid(row=1, column=1, padx=5)
+        vol_scale = ttk.Scale(vol_frame, from_=0.3, to=2.0, orient='horizontal',
+                             variable=self.volatility_scale_var, command=self.on_volatility_change)
+        vol_scale.pack(side='left', fill='x', expand=True)
+        self.volatility_label = ttk.Label(vol_frame, text="1.0x")
+        self.volatility_label.pack(side='right')
+
+        # Trend Strength
+        ttk.Label(scenario_settings, text="Trend Strength:").grid(row=1, column=2, sticky='w', padx=5, pady=5)
+        self.trend_strength_var = tk.DoubleVar(value=0.5)  # Neutral trend
+        trend_frame = ttk.Frame(scenario_settings)
+        trend_frame.grid(row=1, column=3, padx=5)
+        trend_scale = ttk.Scale(trend_frame, from_=0.0, to=1.0, orient='horizontal',
+                               variable=self.trend_strength_var, command=self.on_trend_change)
+        trend_scale.pack(side='left', fill='x', expand=True)
+        self.trend_label = ttk.Label(trend_frame, text="0.5")
+        self.trend_label.pack(side='right')
+
         # Run scenarios button
         scenarios_btn = ttk.Button(scenario_settings, text="Run Scenario Analysis", command=self.run_scenarios)
-        scenarios_btn.grid(row=0, column=4, padx=10)
+        scenarios_btn.grid(row=0, column=4, rowspan=2, padx=10)
+
+        # Scenario Status Indicator
+        self.scenario_status_var = tk.StringVar(value="✅ Scenarios: Balanced analysis")
+        ttk.Label(scenario_settings, textvariable=self.scenario_status_var,
+                 foreground="green", font=('TkDefaultFont', 8)).grid(row=2, column=0, columnspan=4, sticky='w', pady=5)
         
         # Scenarios results frame
         self.scenarios_results_frame = ttk.Frame(self.scenarios_frame)
@@ -242,27 +440,66 @@ class MonteCarloGUI:
         """Create portfolio optimization tab."""
         self.portfolio_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.portfolio_frame, text="📈 Portfolio")
-        
+
+        # Portfolio Parameter Presets
+        preset_section = ttk.LabelFrame(self.portfolio_frame, text="Portfolio Optimization Presets", padding=10)
+        preset_section.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(preset_section, text="Optimization Preset:").grid(row=0, column=0, sticky='w', padx=5)
+        self.portfolio_preset_var = tk.StringVar(value="Balanced")
+        preset_combo = ttk.Combobox(preset_section, textvariable=self.portfolio_preset_var,
+                                  values=["Conservative", "Balanced", "Aggressive", "Custom"], width=12)
+        preset_combo.grid(row=0, column=1, padx=5)
+        preset_combo.bind('<<ComboboxSelected>>', self.on_portfolio_preset_change)
+
         # Portfolio Settings
         portfolio_settings = ttk.LabelFrame(self.portfolio_frame, text="Portfolio Optimization", padding=10)
         portfolio_settings.pack(fill='x', padx=10, pady=5)
-        
+
         # Assets input
         ttk.Label(portfolio_settings, text="Assets (comma-separated):").grid(row=0, column=0, sticky='w', padx=5)
         self.assets_var = tk.StringVar(value="AAPL,MSFT,GOOGL,TSLA")
         assets_entry = ttk.Entry(portfolio_settings, textvariable=self.assets_var, width=30)
         assets_entry.grid(row=0, column=1, padx=5)
-        
+
         # Optimization method
         ttk.Label(portfolio_settings, text="Method:").grid(row=0, column=2, sticky='w', padx=5)
         self.opt_method_var = tk.StringVar(value="synthetic_prices")
         opt_method_combo = ttk.Combobox(portfolio_settings, textvariable=self.opt_method_var,
                                        values=["synthetic_prices", "statistical", "random"], width=15)
         opt_method_combo.grid(row=0, column=3, padx=5)
-        
+        opt_method_combo.bind('<<ComboboxSelected>>', self.on_portfolio_method_change)
+
+        # Risk Target
+        ttk.Label(portfolio_settings, text="Target Risk:").grid(row=1, column=0, sticky='w', padx=5, pady=5)
+        self.target_risk_var = tk.DoubleVar(value=0.15)  # 15% target volatility
+        risk_frame = ttk.Frame(portfolio_settings)
+        risk_frame.grid(row=1, column=1, padx=5)
+        risk_scale = ttk.Scale(risk_frame, from_=0.05, to=0.40, orient='horizontal',
+                              variable=self.target_risk_var, command=self.on_target_risk_change)
+        risk_scale.pack(side='left', fill='x', expand=True)
+        self.target_risk_label = ttk.Label(risk_frame, text="15%")
+        self.target_risk_label.pack(side='right')
+
+        # Return Target
+        ttk.Label(portfolio_settings, text="Target Return:").grid(row=1, column=2, sticky='w', padx=5, pady=5)
+        self.target_return_var = tk.DoubleVar(value=0.12)  # 12% target return
+        return_frame = ttk.Frame(portfolio_settings)
+        return_frame.grid(row=1, column=3, padx=5)
+        return_scale = ttk.Scale(return_frame, from_=0.05, to=0.30, orient='horizontal',
+                                variable=self.target_return_var, command=self.on_target_return_change)
+        return_scale.pack(side='left', fill='x', expand=True)
+        self.target_return_label = ttk.Label(return_frame, text="12%")
+        self.target_return_label.pack(side='right')
+
         # Run optimization button
         opt_btn = ttk.Button(portfolio_settings, text="Optimize Portfolio", command=self.run_portfolio_optimization)
-        opt_btn.grid(row=0, column=4, padx=10)
+        opt_btn.grid(row=0, column=4, rowspan=2, padx=10)
+
+        # Portfolio Status Indicator
+        self.portfolio_status_var = tk.StringVar(value="✅ Portfolio: Balanced optimization")
+        ttk.Label(portfolio_settings, textvariable=self.portfolio_status_var,
+                 foreground="green", font=('TkDefaultFont', 8)).grid(row=2, column=0, columnspan=4, sticky='w', pady=5)
         
         # Portfolio results frame
         self.portfolio_results_frame = ttk.Frame(self.portfolio_frame)
@@ -1669,23 +1906,1095 @@ does not guarantee future results. All trading involves risk of loss.
         
         messagebox.showinfo("Report Generated", "Comprehensive analysis report generated and displayed in Results tab")
 
+    def create_liquidity_tab(self):
+        """Create liquidity analysis tab."""
+        self.liquidity_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.liquidity_frame, text="🌊 Liquidity Analysis")
+        
+        # Main container with scrollbar
+        main_container = ttk.Frame(self.liquidity_frame)
+        main_container.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Left panel for controls
+        left_panel = ttk.Frame(main_container)
+        left_panel.pack(side='left', fill='y', padx=(0, 10))
+        
+        # Analysis settings section
+        settings_section = ttk.LabelFrame(left_panel, text="Analysis Settings", padding=10)
+        settings_section.pack(fill='x', pady=(0, 10))
+        
+        # Quick presets
+        ttk.Label(settings_section, text="Quick Analysis:").pack(anchor='w')
+        
+        preset_frame = ttk.Frame(settings_section)
+        preset_frame.pack(fill='x', pady=5)
+        
+        presets = [
+            ("Current Data", self.analyze_current_data),
+            ("SPY Analysis", lambda: self.quick_ticker_analysis("SPY")),
+            ("QQQ Analysis", lambda: self.quick_ticker_analysis("QQQ")),
+            ("Custom Ticker", self.analyze_custom_ticker)
+        ]
+        
+        for i, (text, command) in enumerate(presets):
+            btn = ttk.Button(preset_frame, text=text, command=command, width=12)
+            btn.pack(pady=2, fill='x')
+        
+        # Custom analysis section
+        custom_section = ttk.LabelFrame(left_panel, text="Custom Analysis", padding=10)
+        custom_section.pack(fill='x', pady=(0, 10))
+        
+        # Ticker input for custom analysis
+        ttk.Label(custom_section, text="Ticker:").pack(anchor='w')
+        self.liq_ticker_var = tk.StringVar(value="AAPL")
+        ttk.Entry(custom_section, textvariable=self.liq_ticker_var, width=15).pack(fill='x', pady=2)
+        
+        # Period selection
+        ttk.Label(custom_section, text="Period:").pack(anchor='w', pady=(5,0))
+        self.liq_period_var = tk.StringVar(value="3mo")
+        period_combo = ttk.Combobox(custom_section, textvariable=self.liq_period_var,
+                                  values=["1mo", "2mo", "3mo", "6mo", "1y"], width=15)
+        period_combo.pack(fill='x', pady=2)
+        
+        # Interval selection
+        ttk.Label(custom_section, text="Interval:").pack(anchor='w', pady=(5,0))
+        self.liq_interval_var = tk.StringVar(value="1d")
+        interval_combo = ttk.Combobox(custom_section, textvariable=self.liq_interval_var,
+                                    values=["1h", "4h", "1d", "1wk"], width=15)
+        interval_combo.pack(fill='x', pady=2)
+        
+        # Analysis parameters
+        params_section = ttk.LabelFrame(left_panel, text="Analysis Parameters", padding=10)
+        params_section.pack(fill='x', pady=(0, 10))
+        
+        # Parameter presets
+        ttk.Label(params_section, text="Parameter Preset:").pack(anchor='w')
+        self.preset_var = tk.StringVar(value="Balanced")
+        preset_combo = ttk.Combobox(params_section, textvariable=self.preset_var,
+                                  values=["Conservative", "Balanced", "Aggressive", "Custom"], width=15)
+        preset_combo.pack(fill='x', pady=2)
+        preset_combo.bind('<<ComboboxSelected>>', self.on_preset_change)
+        
+        # Swing sensitivity
+        ttk.Label(params_section, text="Swing Sensitivity: (2=Conservative, 5=Aggressive)").pack(anchor='w', pady=(5,0))
+        self.swing_sens_var = tk.IntVar(value=3)
+        swing_frame = ttk.Frame(params_section)
+        swing_frame.pack(fill='x', pady=2)
+        swing_scale = ttk.Scale(swing_frame, from_=2, to=5, orient='horizontal',
+                              variable=self.swing_sens_var, command=self.on_param_change)
+        swing_scale.pack(side='left', fill='x', expand=True)
+        self.swing_label = ttk.Label(swing_frame, text="3")
+        self.swing_label.pack(side='right')
+        
+        # Zone sensitivity
+        ttk.Label(params_section, text="Zone Impulse Factor: (1.0=Strict, 3.0=Loose)").pack(anchor='w', pady=(5,0))
+        self.zone_sens_var = tk.DoubleVar(value=1.5)
+        zone_frame = ttk.Frame(params_section)
+        zone_frame.pack(fill='x', pady=2)
+        zone_scale = ttk.Scale(zone_frame, from_=1.0, to=3.0, orient='horizontal',
+                             variable=self.zone_sens_var, command=self.on_param_change)
+        zone_scale.pack(side='left', fill='x', expand=True)
+        self.zone_label = ttk.Label(zone_frame, text="1.5")
+        self.zone_label.pack(side='right')
+        
+        # Volume confirmation threshold
+        ttk.Label(params_section, text="Volume Confirmation: (1.0=Normal, 2.0=High)").pack(anchor='w', pady=(5,0))
+        self.volume_threshold_var = tk.DoubleVar(value=1.2)
+        volume_frame = ttk.Frame(params_section)
+        volume_frame.pack(fill='x', pady=2)
+        volume_scale = ttk.Scale(volume_frame, from_=1.0, to=2.0, orient='horizontal',
+                               variable=self.volume_threshold_var, command=self.on_param_change)
+        volume_scale.pack(side='left', fill='x', expand=True)
+        self.volume_label = ttk.Label(volume_frame, text="1.2")
+        self.volume_label.pack(side='right')
+        
+        # Liquidity scoring method
+        ttk.Label(params_section, text="Liquidity Scoring:").pack(anchor='w', pady=(5,0))
+        self.scoring_method_var = tk.StringVar(value="Sophisticated")
+        scoring_combo = ttk.Combobox(params_section, textvariable=self.scoring_method_var,
+                                   values=["Simple", "Balanced", "Sophisticated"], width=15)
+        scoring_combo.pack(fill='x', pady=2)
+        
+        # Parameter validation indicator
+        self.param_status_var = tk.StringVar(value="✅ Parameters: Optimal")
+        ttk.Label(params_section, textvariable=self.param_status_var, 
+                 foreground="green", font=('TkDefaultFont', 8)).pack(anchor='w', pady=(5,0))
+        
+        # Action buttons
+        action_section = ttk.LabelFrame(left_panel, text="Actions", padding=10)
+        action_section.pack(fill='x')
+        
+        ttk.Button(action_section, text="🔍 Run Analysis", 
+                  command=self.run_liquidity_analysis).pack(fill='x', pady=2)
+        ttk.Button(action_section, text="📊 Generate Chart", 
+                  command=self.generate_liquidity_chart).pack(fill='x', pady=2)
+        ttk.Button(action_section, text="💾 Export Results", 
+                  command=self.export_liquidity_results).pack(fill='x', pady=2)
+        
+        # Right panel for results
+        right_panel = ttk.Frame(main_container)
+        right_panel.pack(side='right', fill='both', expand=True)
+        
+        # Results display
+        results_section = ttk.LabelFrame(right_panel, text="Analysis Results", padding=10)
+        results_section.pack(fill='both', expand=True)
+        
+        # Create notebook for different result views
+        self.liq_results_notebook = ttk.Notebook(results_section)
+        self.liq_results_notebook.pack(fill='both', expand=True)
+        
+        # Summary tab
+        self.create_liquidity_summary_tab()
+        
+        # Details tab
+        self.create_liquidity_details_tab()
+        
+        # Chart tab
+        self.create_liquidity_chart_tab()
+        
+    def create_liquidity_summary_tab(self):
+        """Create summary tab for liquidity results."""
+        summary_frame = ttk.Frame(self.liq_results_notebook)
+        self.liq_results_notebook.add(summary_frame, text="📋 Summary")
+        
+        # Summary text widget
+        self.liq_summary_text = tk.Text(summary_frame, wrap=tk.WORD, width=60, height=20,
+                                       font=('Consolas', 10))
+        liq_summary_scrollbar = ttk.Scrollbar(summary_frame, orient="vertical", 
+                                            command=self.liq_summary_text.yview)
+        self.liq_summary_text.configure(yscrollcommand=liq_summary_scrollbar.set)
+        
+        self.liq_summary_text.pack(side='left', fill='both', expand=True)
+        liq_summary_scrollbar.pack(side='right', fill='y')
+        
+        # Initial message
+        self.liq_summary_text.insert(tk.END, 
+            "🌊 LIQUIDITY ANALYSIS\n" +
+            "=" * 50 + "\n\n" +
+            "Welcome to the Liquidity Analyzer!\n\n" +
+            "This tool provides institutional-level market analysis including:\n" +
+            "• Market Structure Analysis (BOS/CHOCH)\n" +
+            "• Supply & Demand Zone Detection\n" +
+            "• Liquidity Pocket Identification\n" +
+            "• Market Regime Classification\n\n" +
+            "Click 'Run Analysis' to begin or use one of the quick presets.\n\n" +
+            "💡 Pro Tip: Try 'Current Data' to analyze the data loaded\n" +
+            "in the Data & Strategy tab!"
+        )
+        
+    def create_liquidity_details_tab(self):
+        """Create details tab for liquidity results."""
+        details_frame = ttk.Frame(self.liq_results_notebook)
+        self.liq_results_notebook.add(details_frame, text="📊 Details")
+        
+        # Create treeview for detailed results
+        columns = ('Type', 'Time', 'Level', 'Strength', 'Description')
+        self.liq_details_tree = ttk.Treeview(details_frame, columns=columns, show='headings', height=15)
+        
+        # Define headings
+        for col in columns:
+            self.liq_details_tree.heading(col, text=col)
+            self.liq_details_tree.column(col, width=100)
+        
+        # Scrollbar for treeview
+        details_scrollbar = ttk.Scrollbar(details_frame, orient="vertical",
+                                        command=self.liq_details_tree.yview)
+        self.liq_details_tree.configure(yscrollcommand=details_scrollbar.set)
+        
+        self.liq_details_tree.pack(side='left', fill='both', expand=True)
+        details_scrollbar.pack(side='right', fill='y')
+        
+    def create_liquidity_chart_tab(self):
+        """Create chart tab for liquidity visualization."""
+        chart_frame = ttk.Frame(self.liq_results_notebook)
+        self.liq_results_notebook.add(chart_frame, text="📈 Chart")
+        
+        # Matplotlib figure
+        self.liq_fig = Figure(figsize=(10, 8), dpi=100)
+        self.liq_canvas = FigureCanvasTkAgg(self.liq_fig, chart_frame)
+        self.liq_canvas.get_tk_widget().pack(fill='both', expand=True)
+        
+        # Initial message
+        self.liq_fig.suptitle("Liquidity Analysis Chart\n\nRun analysis to display results", 
+                            fontsize=16, y=0.5)
+        self.liq_canvas.draw()
+
+    def analyze_current_data(self):
+        """Analyze the currently loaded data."""
+        if self.current_data is None:
+            messagebox.showwarning("No Data", 
+                                 "Please load data in the Data & Strategy tab first")
+            return
+            
+        self.update_status("Running liquidity analysis on current data...")
+        
+        def analyze():
+            try:
+                # Get current ticker from data tab
+                ticker = self.ticker_var.get()
+                
+                # Run analysis
+                analysis = self.liquidity_analyzer.analyze_data(
+                    self.current_data, 
+                    ticker=ticker,
+                    timeframe=f"{self.period_var.get()}_{self.interval_var.get()}",
+                    swing_sensitivity=self.swing_sens_var.get(),
+                    zone_sensitivity=self.zone_sens_var.get()
+                )
+                
+                self.current_liquidity_analysis = analysis
+                self.update_liquidity_display(analysis)
+                self.update_status("Liquidity analysis complete")
+                
+            except Exception as e:
+                messagebox.showerror("Analysis Error", f"Failed to analyze data: {e}")
+                self.update_status("Analysis failed")
+        
+        # Run in background thread
+        thread = threading.Thread(target=analyze)
+        thread.daemon = True
+        thread.start()
+        
+    def quick_ticker_analysis(self, ticker):
+        """Run quick analysis on a specific ticker."""
+        self.update_status(f"Running quick liquidity analysis on {ticker}...")
+        
+        def analyze():
+            try:
+                analysis = quick_analysis(ticker, period="3mo", interval="1d")
+                self.current_liquidity_analysis = analysis
+                self.update_liquidity_display(analysis)
+                self.update_status(f"Quick analysis of {ticker} complete")
+                
+            except Exception as e:
+                messagebox.showerror("Analysis Error", f"Failed to analyze {ticker}: {e}")
+                self.update_status("Analysis failed")
+        
+        # Run in background thread
+        thread = threading.Thread(target=analyze)
+        thread.daemon = True
+        thread.start()
+        
+    def analyze_custom_ticker(self):
+        """Analyze custom ticker with user settings."""
+        ticker = self.liq_ticker_var.get().strip().upper()
+        if not ticker:
+            messagebox.showwarning("Invalid Ticker", "Please enter a ticker symbol")
+            return
+            
+        self.update_status(f"Running custom liquidity analysis on {ticker}...")
+        
+        def analyze():
+            try:
+                analysis = quick_analysis(
+                    ticker, 
+                    period=self.liq_period_var.get(),
+                    interval=self.liq_interval_var.get()
+                )
+                self.current_liquidity_analysis = analysis
+                self.update_liquidity_display(analysis)
+                self.update_status(f"Custom analysis of {ticker} complete")
+                
+            except Exception as e:
+                messagebox.showerror("Analysis Error", f"Failed to analyze {ticker}: {e}")
+                self.update_status("Analysis failed")
+        
+        # Run in background thread
+        thread = threading.Thread(target=analyze)
+        thread.daemon = True
+        thread.start()
+        
+    def run_liquidity_analysis(self):
+        """Run liquidity analysis with current settings."""
+        # Just call the custom analysis
+        self.analyze_custom_ticker()
+        
+    def update_liquidity_display(self, analysis):
+        """Update the liquidity analysis display."""
+        # Update summary
+        self.update_liquidity_summary(analysis)
+        
+        # Update details
+        self.update_liquidity_details(analysis)
+        
+        # Update chart
+        self.update_liquidity_chart(analysis)
+        
+    def update_liquidity_summary(self, analysis):
+        """Update the summary display."""
+        summary = f"""🌊 LIQUIDITY ANALYSIS RESULTS - {analysis.ticker}
+{'='*60}
+
+📊 BASIC INFORMATION
+Ticker: {analysis.ticker}
+Timeframe: {analysis.timeframe}
+Data Points: {analysis.analysis_summary['data_points']}
+Analysis Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+🌊 MARKET REGIME: {analysis.market_regime}
+Hurst Exponent: {analysis.hurst_exponent:.3f}
+{'📈 Trending market - Good for trend following' if analysis.market_regime == 'TRENDING' else ''}
+{'🔄 Mean reverting - Good for contrarian strategies' if analysis.market_regime == 'MEAN_REVERTING' else ''}
+{'🎲 Random market - Use smaller position sizes' if analysis.market_regime == 'RANDOM' else ''}
+
+📈 MARKET STRUCTURE
+Total Structure Events: {analysis.analysis_summary['total_structure_events']}
+BOS (Break of Structure): {analysis.analysis_summary['bos_events']}
+CHOCH (Change of Character): {analysis.analysis_summary['choch_events']}
+
+🎯 SUPPLY & DEMAND ZONES
+Supply Zones: {analysis.analysis_summary['supply_zones']}
+Demand Zones: {analysis.analysis_summary['demand_zones']}
+Total Zones: {len(analysis.supply_demand_zones)}
+
+💧 LIQUIDITY ANALYSIS
+Liquidity Pockets: {analysis.analysis_summary['liquidity_pockets']}
+Average Liquidity Score: {analysis.analysis_summary['avg_liquidity_score']:.1f}/100
+Maximum Liquidity Score: {analysis.analysis_summary['max_liquidity_score']:.1f}/100
+
+💰 CURRENT MARKET STATUS
+Current Price: ${analysis.data['Close'].iloc[-1]:.2f}
+Current Liquidity: {analysis.liquidity_score.iloc[-1]:.1f}/100
+
+"""
+
+        # Add recent events
+        if analysis.structure_events:
+            summary += "\n🔍 RECENT STRUCTURE EVENTS\n"
+            summary += "-" * 30 + "\n"
+            recent_events = analysis.structure_events[-5:]
+            for event in recent_events:
+                summary += f"{event.timestamp.strftime('%Y-%m-%d')}: {event.kind} at ${event.level:.2f}\n"
+
+        # Add zone analysis
+        if analysis.supply_demand_zones:
+            current_price = analysis.data['Close'].iloc[-1]
+            summary += "\n🎯 NEARBY ZONES\n"
+            summary += "-" * 30 + "\n"
+            
+            for zone in analysis.supply_demand_zones:
+                zone_center = (zone.price_min + zone.price_max) / 2
+                distance_pct = abs(current_price - zone_center) / current_price * 100
+                
+                if distance_pct < 10:  # Within 10%
+                    summary += f"{zone.kind}: ${zone.price_min:.2f}-${zone.price_max:.2f} "
+                    summary += f"(Distance: {distance_pct:.1f}%, Strength: {zone.strength:.1f})\n"
+
+        # Add trading recommendations
+        summary += "\n💡 TRADING RECOMMENDATIONS\n"
+        summary += "-" * 30 + "\n"
+        
+        current_liquidity = analysis.liquidity_score.iloc[-1]
+        if current_liquidity > 70:
+            summary += "✅ High liquidity - Good for trading\n"
+        elif current_liquidity > 30:
+            summary += "⚠️ Medium liquidity - Trade with caution\n"
+        else:
+            summary += "❌ Low liquidity - Avoid trading\n"
+            
+        if analysis.market_regime == "TRENDING":
+            summary += "📈 Use trend-following strategies\n"
+        elif analysis.market_regime == "MEAN_REVERTING":
+            summary += "🔄 Use mean-reversion strategies\n"
+        else:
+            summary += "🎲 Reduce position sizes in random market\n"
+
+        # Update the display
+        self.liq_summary_text.delete(1.0, tk.END)
+        self.liq_summary_text.insert(tk.END, summary)
+        
+    def update_liquidity_details(self, analysis):
+        """Update the details treeview."""
+        # Clear existing items
+        for item in self.liq_details_tree.get_children():
+            self.liq_details_tree.delete(item)
+            
+        # Add structure events
+        for event in analysis.structure_events:
+            self.liq_details_tree.insert('', 'end', values=(
+                'Structure',
+                event.timestamp.strftime('%Y-%m-%d'),
+                f"${event.level:.2f}",
+                'N/A',
+                event.kind
+            ))
+            
+        # Add supply/demand zones
+        for zone in analysis.supply_demand_zones:
+            self.liq_details_tree.insert('', 'end', values=(
+                'Zone',
+                zone.start_time.strftime('%Y-%m-%d'),
+                f"${zone.price_min:.2f}-${zone.price_max:.2f}",
+                f"{zone.strength:.1f}",
+                f"{zone.kind} Zone"
+            ))
+            
+        # Add liquidity pockets
+        for pocket in analysis.liquidity_pockets[-10:]:  # Last 10 pockets
+            self.liq_details_tree.insert('', 'end', values=(
+                'Liquidity',
+                pocket.timestamp.strftime('%Y-%m-%d'),
+                f"${pocket.level:.2f}",
+                f"{pocket.score:.1f}",
+                f"Stops {pocket.side}"
+            ))
+
+    def update_liquidity_chart(self, analysis):
+        """Update the liquidity chart."""
+        self.liq_fig.clear()
+        
+        # Create subplots
+        gs = self.liq_fig.add_gridspec(3, 1, height_ratios=[2, 1, 1], hspace=0.3)
+        ax1 = self.liq_fig.add_subplot(gs[0])
+        ax2 = self.liq_fig.add_subplot(gs[1])
+        ax3 = self.liq_fig.add_subplot(gs[2])
+        
+        # Plot 1: Price with zones and events
+        data = analysis.data
+        ax1.plot(data.index, data['Close'], label='Close Price', linewidth=1.5, color='blue')
+        
+        # Add supply/demand zones
+        for zone in analysis.supply_demand_zones:
+            color = 'red' if zone.kind == 'SUPPLY' else 'green'
+            alpha = min(0.3, zone.strength * 0.1)
+            
+            zone_mask = (data.index >= zone.start_time) & (data.index <= zone.end_time)
+            if zone_mask.any():
+                ax1.fill_between(data.index, zone.price_min, zone.price_max,
+                               where=zone_mask, alpha=alpha, color=color,
+                               label=f'{zone.kind} Zone' if zone == analysis.supply_demand_zones[0] else "")
+        
+        # Add structure events
+        event_colors = {'BOS_UP': 'blue', 'BOS_DOWN': 'blue', 'CHOCH_UP': 'orange', 'CHOCH_DOWN': 'orange'}
+        event_markers = {'BOS_UP': '^', 'BOS_DOWN': 'v', 'CHOCH_UP': '^', 'CHOCH_DOWN': 'v'}
+        
+        for event in analysis.structure_events[-10:]:  # Last 10 events
+            if event.timestamp in data.index:
+                color = event_colors.get(event.kind, 'gray')
+                marker = event_markers.get(event.kind, 'o')
+                ax1.scatter(event.timestamp, event.level, color=color, marker=marker, s=100,
+                          label=event.kind if event == analysis.structure_events[-10] else "", zorder=5)
+        
+        ax1.set_title(f'{analysis.ticker} - Price with Supply/Demand Zones and Structure Events')
+        ax1.set_ylabel('Price ($)')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: Liquidity score
+        ax2.plot(analysis.liquidity_score.index, analysis.liquidity_score.values,
+                label='Liquidity Score', color='purple', linewidth=1.5)
+        ax2.fill_between(analysis.liquidity_score.index, 0, analysis.liquidity_score.values,
+                        alpha=0.3, color='purple')
+        
+        # Add threshold lines
+        ax2.axhline(y=70, color='green', linestyle='--', alpha=0.7, label='High (70+)')
+        ax2.axhline(y=30, color='orange', linestyle='--', alpha=0.7, label='Medium (30+)')
+        
+        ax2.set_title('Liquidity Score Over Time')
+        ax2.set_ylabel('Score')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # Plot 3: Market regime indicator
+        regime_colors = {'TRENDING': 'green', 'MEAN_REVERTING': 'orange', 'RANDOM': 'red'}
+        regime_color = regime_colors.get(analysis.market_regime, 'gray')
+        
+        ax3.axhspan(0, 1, color=regime_color, alpha=0.3, label=f'{analysis.market_regime} (H={analysis.hurst_exponent:.2f})')
+        ax3.text(0.5, 0.5, f'Market Regime: {analysis.market_regime}\nHurst Exponent: {analysis.hurst_exponent:.3f}',
+                transform=ax3.transAxes, ha='center', va='center', fontsize=12, fontweight='bold')
+        ax3.set_xlim(data.index[0], data.index[-1])
+        ax3.set_ylim(0, 1)
+        ax3.set_ylabel('Regime')
+        ax3.set_xlabel('Date')
+        ax3.legend()
+        
+        self.liq_fig.suptitle(f'Liquidity Analysis - {analysis.ticker}', fontsize=16)
+        self.liq_canvas.draw()
+
+    def generate_liquidity_chart(self):
+        """Generate and save liquidity chart."""
+        if self.current_liquidity_analysis is None:
+            messagebox.showwarning("No Analysis", "Please run analysis first")
+            return
+            
+        try:
+            filename = f"liquidity_analysis_{self.current_liquidity_analysis.ticker.lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            self.liq_fig.savefig(filename, dpi=300, bbox_inches='tight')
+            messagebox.showinfo("Chart Saved", f"Chart saved as: {filename}")
+            
+        except Exception as e:
+            messagebox.showerror("Save Error", f"Failed to save chart: {e}")
+
+    def export_liquidity_results(self):
+        """Export liquidity analysis results."""
+        if self.current_liquidity_analysis is None:
+            messagebox.showwarning("No Analysis", "Please run analysis first")
+            return
+
+        try:
+            # Create export data
+            analysis = self.current_liquidity_analysis
+
+            # Export enhanced data with liquidity scores
+            filename = f"liquidity_data_{analysis.ticker.lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            analysis.enhanced_data.to_csv(filename)
+
+            # Export summary
+            summary_filename = f"liquidity_summary_{analysis.ticker.lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            with open(summary_filename, 'w') as f:
+                f.write(self.liq_summary_text.get(1.0, tk.END))
+
+            messagebox.showinfo("Export Complete",
+                              f"Results exported:\n• Data: {filename}\n• Summary: {summary_filename}")
+
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export results: {e}")
+
+    # ===== SOPHISTICATED PARAMETER CALLBACK METHODS =====
+
+    def on_strategy_preset_change(self, event=None):
+        """Handle strategy preset changes."""
+        preset = self.strategy_preset_var.get()
+
+        if preset == "Conservative":
+            self.risk_mgmt_var.set(0.015)  # 1.5% risk per trade
+            self.stop_loss_var.set(0.03)   # 3% stop loss
+            self.take_profit_var.set(0.08) # 8% take profit
+        elif preset == "Balanced":
+            self.risk_mgmt_var.set(0.02)   # 2% risk per trade
+            self.stop_loss_var.set(0.05)   # 5% stop loss
+            self.take_profit_var.set(0.10) # 10% take profit
+        elif preset == "Aggressive":
+            self.risk_mgmt_var.set(0.03)   # 3% risk per trade
+            self.stop_loss_var.set(0.08)   # 8% stop loss
+            self.take_profit_var.set(0.15) # 15% take profit
+
+        self.on_risk_change()
+        self.on_stop_change()
+        self.on_profit_change()
+        self.validate_strategy_params()
+
+    def on_algorithm_change(self, event=None):
+        """Handle algorithm selection changes."""
+        algorithm = self.algorithm_var.get()
+        # Could add algorithm-specific parameter recommendations here
+        self.validate_strategy_params()
+
+    def on_risk_change(self, value=None):
+        """Handle risk management parameter changes."""
+        self.risk_label.config(text=f"{self.risk_mgmt_var.get():.1f}%")
+        self.validate_strategy_params()
+
+    def on_stop_change(self, value=None):
+        """Handle stop loss parameter changes."""
+        self.stop_label.config(text=f"{self.stop_loss_var.get():.1f}%")
+        self.validate_strategy_params()
+
+    def on_profit_change(self, value=None):
+        """Handle take profit parameter changes."""
+        self.profit_label.config(text=f"{self.take_profit_var.get():.1f}%")
+        self.validate_strategy_params()
+
+    def validate_strategy_params(self):
+        """Validate strategy parameters and provide feedback."""
+        risk = self.risk_mgmt_var.get()
+        stop = self.stop_loss_var.get()
+        profit = self.take_profit_var.get()
+
+        issues = []
+        recommendations = []
+
+        # Validate risk management
+        if risk > profit:
+            issues.append("Risk per trade exceeds take profit target")
+        if stop < risk * 2:
+            recommendations.append("Stop loss should be 2-3x risk per trade")
+
+        # Validate risk-reward ratio
+        risk_reward = profit / stop if stop > 0 else 0
+        if risk_reward < 1.5:
+            recommendations.append("Risk-reward ratio below 1.5:1")
+        elif risk_reward > 5:
+            recommendations.append("Risk-reward ratio above 5:1 may be unrealistic")
+
+        # Determine status
+        if issues:
+            status = f"⚠️ Strategy: {len(issues)} critical issues"
+            color = "red"
+        elif recommendations:
+            status = f"💡 Strategy: {len(recommendations)} optimizations suggested"
+            color = "blue"
+        else:
+            status = "✅ Strategy: Optimal risk management"
+            color = "green"
+
+        self.strategy_status_var.set(status)
+
+    def on_mc_preset_change(self, event=None):
+        """Handle Monte Carlo preset changes."""
+        preset = self.mc_preset_var.get()
+
+        if preset == "Conservative":
+            self.num_sims_var.set("500")     # Fewer but more accurate simulations
+            self.confidence_var.set(0.99)    # Higher confidence
+            self.risk_free_var.set(0.03)     # Lower risk-free rate
+        elif preset == "Balanced":
+            self.num_sims_var.set("1000")    # Standard simulations
+            self.confidence_var.set(0.95)    # Standard confidence
+            self.risk_free_var.set(0.045)    # Market risk-free rate
+        elif preset == "Aggressive":
+            self.num_sims_var.set("2000")    # More simulations
+            self.confidence_var.set(0.90)    # Lower confidence
+            self.risk_free_var.set(0.06)     # Higher risk-free rate
+
+        self.on_confidence_change()
+        self.on_risk_free_change()
+        self.validate_mc_params()
+
+    def on_mc_method_change(self, event=None):
+        """Handle Monte Carlo method changes."""
+        method = self.sim_method_var.get()
+        # Could add method-specific parameter recommendations
+        self.validate_mc_params()
+
+    def on_confidence_change(self, value=None):
+        """Handle confidence level changes."""
+        self.confidence_label.config(text=f"{int(self.confidence_var.get() * 100)}%")
+        self.validate_mc_params()
+
+    def on_risk_free_change(self, value=None):
+        """Handle risk-free rate changes."""
+        self.risk_free_label.config(text=f"{self.risk_free_var.get():.1f}%")
+        self.validate_mc_params()
+
+    def validate_mc_params(self):
+        """Validate Monte Carlo parameters."""
+        sims = int(self.num_sims_var.get()) if self.num_sims_var.get().isdigit() else 1000
+        confidence = self.confidence_var.get()
+        risk_free = self.risk_free_var.get()
+
+        issues = []
+        recommendations = []
+
+        if sims < 100:
+            issues.append("Very few simulations may be unreliable")
+        elif sims > 10000:
+            recommendations.append("Many simulations may be computationally expensive")
+
+        if confidence < 0.85:
+            recommendations.append("Low confidence may miss important scenarios")
+        elif confidence > 0.99:
+            recommendations.append("Very high confidence may be over-conservative")
+
+        if risk_free < 0.01:
+            recommendations.append("Very low risk-free rate may not reflect reality")
+        elif risk_free > 0.10:
+            recommendations.append("Very high risk-free rate may be unrealistic")
+
+        if issues:
+            status = f"⚠️ Monte Carlo: {len(issues)} critical issues"
+        elif recommendations:
+            status = f"💡 Monte Carlo: {len(recommendations)} optimizations suggested"
+        else:
+            status = "✅ Monte Carlo: Optimal parameters"
+
+        self.mc_status_var.set(status)
+
+    def on_scenario_preset_change(self, event=None):
+        """Handle scenario preset changes."""
+        preset = self.scenario_preset_var.get()
+
+        if preset == "Conservative":
+            self.num_scenarios_var.set("50")      # Fewer scenarios
+            self.volatility_scale_var.set(0.8)    # Lower volatility
+            self.trend_strength_var.set(0.3)      # Weak trends
+        elif preset == "Balanced":
+            self.num_scenarios_var.set("100")     # Standard scenarios
+            self.volatility_scale_var.set(1.0)    # Normal volatility
+            self.trend_strength_var.set(0.5)      # Neutral trends
+        elif preset == "Aggressive":
+            self.num_scenarios_var.set("200")     # More scenarios
+            self.volatility_scale_var.set(1.5)    # Higher volatility
+            self.trend_strength_var.set(0.7)      # Strong trends
+
+        self.on_volatility_change()
+        self.on_trend_change()
+        self.validate_scenario_params()
+
+    def on_volatility_change(self, value=None):
+        """Handle volatility scale changes."""
+        self.volatility_label.config(text=f"{self.volatility_scale_var.get():.1f}x")
+        self.validate_scenario_params()
+
+    def on_trend_change(self, value=None):
+        """Handle trend strength changes."""
+        self.trend_label.config(text=f"{self.trend_strength_var.get():.1f}")
+        self.validate_scenario_params()
+
+    def validate_scenario_params(self):
+        """Validate scenario parameters."""
+        scenarios = int(self.num_scenarios_var.get()) if self.num_scenarios_var.get().isdigit() else 100
+        volatility = self.volatility_scale_var.get()
+        trend = self.trend_strength_var.get()
+
+        issues = []
+        recommendations = []
+
+        if scenarios < 20:
+            issues.append("Very few scenarios may miss important outcomes")
+        elif scenarios > 500:
+            recommendations.append("Many scenarios may be time-consuming")
+
+        if volatility < 0.5:
+            recommendations.append("Very low volatility may not capture real risks")
+        elif volatility > 2.0:
+            recommendations.append("Very high volatility may create unrealistic scenarios")
+
+        if trend < 0.1:
+            recommendations.append("Very weak trends may not reflect market reality")
+        elif trend > 0.9:
+            recommendations.append("Very strong trends may be unrealistic")
+
+        if issues:
+            status = f"⚠️ Scenarios: {len(issues)} critical issues"
+        elif recommendations:
+            status = f"💡 Scenarios: {len(recommendations)} optimizations suggested"
+        else:
+            status = "✅ Scenarios: Optimal parameters"
+
+        self.scenario_status_var.set(status)
+
+    def on_portfolio_preset_change(self, event=None):
+        """Handle portfolio preset changes."""
+        preset = self.portfolio_preset_var.get()
+
+        if preset == "Conservative":
+            self.target_risk_var.set(0.10)      # Lower risk
+            self.target_return_var.set(0.08)    # Lower return target
+        elif preset == "Balanced":
+            self.target_risk_var.set(0.15)      # Moderate risk
+            self.target_return_var.set(0.12)    # Moderate return
+        elif preset == "Aggressive":
+            self.target_risk_var.set(0.25)      # Higher risk
+            self.target_return_var.set(0.18)    # Higher return
+
+        self.on_target_risk_change()
+        self.on_target_return_change()
+        self.validate_portfolio_params()
+
+    def on_portfolio_method_change(self, event=None):
+        """Handle portfolio method changes."""
+        method = self.opt_method_var.get()
+        self.validate_portfolio_params()
+
+    def on_target_risk_change(self, value=None):
+        """Handle target risk changes."""
+        self.target_risk_label.config(text=f"{self.target_risk_var.get():.0f}%")
+        self.validate_portfolio_params()
+
+    def on_target_return_change(self, value=None):
+        """Handle target return changes."""
+        self.target_return_label.config(text=f"{self.target_return_var.get():.0f}%")
+        self.validate_portfolio_params()
+
+    def validate_portfolio_params(self):
+        """Validate portfolio parameters."""
+        risk = self.target_risk_var.get()
+        return_target = self.target_return_var.get()
+        method = self.opt_method_var.get()
+
+        issues = []
+        recommendations = []
+
+        if return_target < risk * 0.5:
+            issues.append("Return target too low for risk level")
+        elif return_target > risk * 2:
+            recommendations.append("Return target may be unrealistic for risk level")
+
+        if risk < 0.08:
+            recommendations.append("Very low risk may result in poor returns")
+        elif risk > 0.35:
+            recommendations.append("Very high risk may be unsuitable for most investors")
+
+        if return_target < 0.06:
+            recommendations.append("Very low return target may not meet investment goals")
+        elif return_target > 0.25:
+            recommendations.append("Very high return target may be unrealistic")
+
+        if issues:
+            status = f"⚠️ Portfolio: {len(issues)} critical issues"
+        elif recommendations:
+            status = f"💡 Portfolio: {len(recommendations)} optimizations suggested"
+        else:
+            status = "✅ Portfolio: Optimal parameters"
+
+        self.portfolio_status_var.set(status)
+
+    def on_preset_change(self, event=None):
+        """Handle parameter preset changes."""
+        preset = self.preset_var.get()
+        
+        if preset == "Conservative":
+            # Conservative: Higher swing sensitivity, stricter zones, higher volume confirmation
+            self.swing_sens_var.set(4)
+            self.zone_sens_var.set(2.0)
+            self.volume_threshold_var.set(1.5)
+            self.scoring_method_var.set("Sophisticated")
+            
+        elif preset == "Balanced":
+            # Balanced: Default values for most markets
+            self.swing_sens_var.set(3)
+            self.zone_sens_var.set(1.5)
+            self.volume_threshold_var.set(1.2)
+            self.scoring_method_var.set("Sophisticated")
+            
+        elif preset == "Aggressive":
+            # Aggressive: Lower swing sensitivity, looser zones, normal volume
+            self.swing_sens_var.set(2)
+            self.zone_sens_var.set(1.2)
+            self.volume_threshold_var.set(1.0)
+            self.scoring_method_var.set("Balanced")
+            
+        # Update parameter labels
+        self.on_param_change()
+        
+        # Validate parameters
+        self.validate_parameters()
+        
+    def on_param_change(self, value=None):
+        """Handle parameter changes and update labels."""
+        # Update parameter labels
+        self.swing_label.config(text=f"{self.swing_sens_var.get()}")
+        self.zone_label.config(text=f"{self.zone_sens_var.get():.1f}")
+        self.volume_label.config(text=f"{self.volume_threshold_var.get():.1f}")
+        
+        # Set preset to Custom if user manually adjusts
+        if value is not None:  # Only if triggered by user interaction
+            self.preset_var.set("Custom")
+        
+        # Validate parameters
+        self.validate_parameters()
+        
+    def validate_parameters(self):
+        """Validate and provide feedback on parameter settings."""
+        swing_sens = self.swing_sens_var.get()
+        zone_sens = self.zone_sens_var.get()
+        volume_thresh = self.volume_threshold_var.get()
+        
+        issues = []
+        recommendations = []
+        
+        # Validate swing sensitivity
+        if swing_sens <= 2:
+            recommendations.append("Low swing sensitivity may miss important levels")
+        elif swing_sens >= 5:
+            recommendations.append("High swing sensitivity may create noise")
+        
+        # Validate zone sensitivity
+        if zone_sens <= 1.0:
+            recommendations.append("Very strict zone detection - may miss valid zones")
+        elif zone_sens >= 2.5:
+            recommendations.append("Loose zone detection - may create false zones")
+        
+        # Validate volume threshold
+        if volume_thresh <= 1.0:
+            recommendations.append("Low volume threshold - zones may lack confirmation")
+        elif volume_thresh >= 1.8:
+            recommendations.append("High volume threshold - may miss valid zones")
+        
+        # Check parameter combinations
+        if swing_sens >= 4 and zone_sens <= 1.2:
+            issues.append("Conservative swings + strict zones may be too restrictive")
+        elif swing_sens <= 2 and zone_sens >= 2.0:
+            issues.append("Aggressive swings + loose zones may create false signals")
+        
+        # Determine status
+        if issues:
+            status = f"⚠️ Issues: {len(issues)} parameter conflicts"
+            color = "orange"
+        elif recommendations:
+            status = f"💡 Tips: {len(recommendations)} optimization suggestions"
+            color = "blue"
+        else:
+            status = "✅ Parameters: Optimal configuration"
+            color = "green"
+        
+        self.param_status_var.set(status)
+        
+        # Create tooltip with details
+        tooltip_text = ""
+        if issues:
+            tooltip_text += "Issues:\n" + "\n".join(f"• {issue}" for issue in issues)
+        if recommendations:
+            if tooltip_text:
+                tooltip_text += "\n\n"
+            tooltip_text += "Recommendations:\n" + "\n".join(f"• {rec}" for rec in recommendations)
+        
+        # Store tooltip for display
+        if hasattr(self, 'param_tooltip'):
+            self.param_tooltip = tooltip_text
+        
+    def get_analysis_parameters(self):
+        """Get current analysis parameters for the analyzer."""
+        return {
+            'swing_sensitivity': self.swing_sens_var.get(),
+            'zone_sensitivity': self.zone_sens_var.get(),
+            'volume_threshold': self.volume_threshold_var.get(),
+            'scoring_method': self.scoring_method_var.get(),
+            'preset': self.preset_var.get()
+        }
+        
+    def apply_sophisticated_parameters(self, analyzer_instance):
+        """Apply sophisticated parameters to the analyzer."""
+        params = self.get_analysis_parameters()
+        
+        # Configure the analyzer based on parameters
+        if hasattr(analyzer_instance, 'configure_parameters'):
+            analyzer_instance.configure_parameters(params)
+        
+        return params
+
+def reposition_window(root=None):
+    """
+    Manually reposition window to center with title bar visible.
+    Can be called from GUI or externally.
+    """
+    if root is None:
+        return
+
+    try:
+        center_window(root, 1400, 900)
+        print("🔄 Window repositioned manually")
+    except Exception as e:
+        print(f"❌ Manual repositioning failed: {e}")
+
+def center_window(root, width=1400, height=900):
+    """
+    Center the window on screen with proper positioning to ensure title bar is visible.
+
+    Args:
+        root: Tkinter root window
+        width: Window width (default 1400)
+        height: Window height (default 900)
+    """
+    try:
+        # Update the window to get proper dimensions
+        root.update_idletasks()
+
+        # Get screen dimensions (with fallback for multi-monitor setups)
+        try:
+            screen_width = root.winfo_screenwidth()
+            screen_height = root.winfo_screenheight()
+        except:
+            # Fallback for systems where winfo_screenwidth/height fail
+            screen_width = 1920  # Common resolution
+            screen_height = 1080
+
+        # Ensure reasonable screen dimensions
+        screen_width = max(screen_width, 1280)  # Minimum reasonable width
+        screen_height = max(screen_height, 720)  # Minimum reasonable height
+
+        # Calculate position to center the window
+        x = max(0, (screen_width - width) // 2)
+        y = max(0, (screen_height - height) // 2)
+
+        # Ensure the window title bar is visible (not too high)
+        # Account for taskbar and window decorations (typically 30-50 pixels)
+        title_bar_height = 40  # Conservative estimate for title bar + borders
+        taskbar_height = 50    # Conservative estimate for taskbar
+
+        # Adjust y position to ensure title bar is visible
+        y = max(title_bar_height, y)
+
+        # Ensure window doesn't go off bottom of screen
+        max_y = screen_height - height - taskbar_height
+        if y > max_y:
+            y = max(title_bar_height, max_y)
+
+        # Ensure x position is reasonable
+        x = max(10, min(x, screen_width - width - 10))
+
+        # Final validation
+        x = max(0, min(x, screen_width - 200))  # Ensure at least 200px visible
+        y = max(0, min(y, screen_height - 200))
+
+        # Set window size and position
+        geometry_string = f"{width}x{height}+{x}+{y}"
+        root.geometry(geometry_string)
+
+        # Force window to front and ensure it's visible
+        root.lift()
+        root.focus_force()
+
+        # Make window temporarily topmost to ensure visibility
+        root.attributes('-topmost', True)
+
+        # Remove topmost after a short delay
+        def remove_topmost():
+            try:
+                root.attributes('-topmost', False)
+                root.focus_force()
+            except:
+                pass
+
+        root.after(150, remove_topmost)
+
+        print(f"✅ Window positioned at ({x}, {y}) with size {width}x{height}")
+        print(f"   Screen: {screen_width}x{screen_height}")
+        print(f"   Geometry: {geometry_string}")
+
+        return True
+
+    except Exception as e:
+        print(f"⚠️ Window centering failed, using fallback: {e}")
+
+        # Multiple fallback attempts
+        fallback_positions = [
+            f"{width}x{height}+100+50",      # Top-left with margin
+            f"{width}x{height}+50+100",      # Slightly different position
+            f"{width}x{height}+200+100",     # More to the right
+        ]
+
+        for i, pos in enumerate(fallback_positions):
+            try:
+                root.geometry(pos)
+                root.lift()
+                root.focus_force()
+                print(f"✅ Fallback position {i+1} applied: {pos}")
+                return True
+            except Exception as e2:
+                print(f"❌ Fallback {i+1} failed: {e2}")
+                continue
+
+        # Last resort - let Tkinter handle it
+        print("❌ All positioning attempts failed - using system default")
+        return False
+
 
 def main():
     """Main function to run the GUI application."""
     try:
+        # Create root window
         root = tk.Tk()
+
+        # Create GUI application
         app = MonteCarloGUI(root)
-        
-        # Center the window
-        root.eval('tk::PlaceWindow . center')
-        
+
+        # Center the window properly with title bar visible
+        # Wait a bit for window to initialize, then center
+        root.after(100, lambda: center_window(root, 1400, 900))
+
         # Start the GUI event loop
         root.mainloop()
-        
+
     except Exception as e:
-        print(f"Error starting GUI application: {e}")
+        print(f"❌ Error starting GUI application: {e}")
         import traceback
         traceback.print_exc()
+        try:
+            root.destroy()
+        except:
+            pass
 
 
 if __name__ == "__main__":
